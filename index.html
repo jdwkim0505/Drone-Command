@@ -829,7 +829,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     // switching feeds is a hard cut: keep the camera's compass direction across the group,
     // snap straight onto a stalked target, and skip the pitch/bank easing for one frame
     const had = fpv.drone && !fpv.drone.dead;
-    fpv.drone = d; fpv.lost = 0;
+    fpv.drone = d; fpv.lost = 0; fpv.foe = null;
     if (!d) return;
     fpv.prevHeading = d.heading; fpv.snap = true;
     const o = d.queue[0];
@@ -854,6 +854,13 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       const want = Math.atan2(o0.target.y - d0.y, o0.target.x - d0.x);
       fpv.look += wrap(want - fpv.look) * Math.min(1, dt * 6);
     }
+    // the moment a strike starts, the camera swings onto the target; Q / E / Z / C still steer it afterward
+    const f0 = d0 && !d0.dead ? d0.foe : null;
+    if (f0 && f0 !== fpv.foe) {
+      fpv.look = Math.atan2(f0.y - d0.y, f0.x - d0.x);
+      fpv.tilt = 0; fpv.snap = true;
+    }
+    fpv.foe = f0;
     fpv.look = wrap(fpv.look);
     if (fpv.lost > 0) {
       fpv.lost -= dt;
