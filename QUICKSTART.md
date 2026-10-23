@@ -54,6 +54,15 @@ Tip: click away from the group and they keep their formation. Click inside the g
 - **Del** removes the selected drones.
 - Change the **Kill chance** slider to see how many drones a kill costs.
 
+## 8. Fly into jamming
+
+The red circle on the map is a jamming zone. Drones inside it lose their link to you.
+
+1. Send a squad to a spot inside the circle. As each drone crosses the edge, its feed switches to **LINK LOST** and the failsafe flies it back out.
+2. Now right-click the target inside the circle. The drones keep diving after the link drops and strike blind. The feed shows **NO FEED · RESULT UNKNOWN**, so you only learn the outcome from the map.
+3. Orders sent to a drone inside the zone never arrive. The top bar tells you how many missed it.
+4. Press **J** to drop a new zone at the cursor, or **J** inside one to remove it.
+
 ## Cheat sheet
 
 | Key | Does |
@@ -62,6 +71,7 @@ Tip: click away from the group and they keep their formation. Click inside the g
 | Shift | Queue the order |
 | A · S · H · P | Attack-move · Stalk · Hover · Patrol (then click) |
 | X · G | Stop · Hold |
+| J | Place or remove a jamming zone |
 | Alt+# · # | Save group · recall group |
 | Tab | Next camera |
 | Q/E · Z/C | Pan · tilt camera |

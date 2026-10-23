@@ -18,6 +18,7 @@ New here? Start with the [Quickstart](QUICKSTART.md).
 | P, then click | Patrol |
 | X / G | Stop / Hold position |
 | D / T | Spawn a drone / place a target at the cursor |
+| J | Place a jamming zone at the cursor (J inside one removes it) |
 | Del | Remove selected drones |
 | Alt+1–0, Shift+1–0, 1–0 | Bind, add to, recall control groups (tap twice to jump) |
 | Tab | Cycle the camera feed through the selection |
@@ -28,4 +29,5 @@ New here? Start with the [Quickstart](QUICKSTART.md).
 
 - **Kamikaze strikes:** each drone is used up on impact and kills with the probability set by the Kill chance slider (60% by default). Drones that are left over stay in the group.
 - **FPV feed:** a simulated camera for the selected drone. It has a stabilized gimbal, shows targets as 3D tanks seen from the drone's actual angle, shows friendly drones with IFF markers, puts edge arrows on targets that are out of frame, and switches to a top-down view while hovering.
+- **Jamming zones:** red circles on the map cut the link between operator and drone. A drone that enters one shows LINK LOST on its feed and stops taking orders. If it was already diving on a target, it finishes the strike blind and the feed never shows the result. Otherwise its failsafe flies it back out to the edge, where the link comes back.
 - **Group movement:** clicking outside the group keeps its formation, clicking inside pulls the drones together, and drones push apart so they don't stack.
