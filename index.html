@@ -1,0 +1,1314 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Swarm Command</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: full-bleed tactical canvas, SC2-style console docked at the bottom, help card top-right. Single dark look by design. */
+:root {
+  color-scheme: dark;
+  --ground: #25272a;
+  --grid: #2e3134;
+  --grid-major: #383c40;
+  --panel: rgba(20, 22, 24, 0.92);
+  --panel-edge: #3b4045;
+  --ink: #d8dde2;
+  --ink-dim: #8a9299;
+  --sel: #4ade80;
+  --patrol: #facc15;
+  --danger: #f87171;
+  --track: #38bdf8;
+  --font-display: "Chakra Petch", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+html, body { height: 100%; }
+body { background: var(--ground); color: var(--ink); font-family: var(--font-mono); font-size: 13px; overflow: hidden; }
+#app { position: fixed; inset: 0; user-select: none; -webkit-user-select: none; }
+#c { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: default; }
+#c.targeting { cursor: crosshair; }
+
+#fpv {
+  position: absolute; left: max(16px, env(safe-area-inset-left, 0px)); top: calc(52px + env(safe-area-inset-top, 0px));
+  width: 340px; max-width: calc(100% - 32px);
+  background: var(--panel); border: 1px solid var(--panel-edge); border-radius: 4px; padding: 6px;
+  pointer-events: none;
+}
+.fpv-head { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; color: var(--ink-dim); padding: 0 2px 5px; white-space: nowrap; }
+.fpv-head b { font: 600 11px var(--font-display); letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink); }
+.fpv-screen { position: relative; aspect-ratio: 16 / 10; overflow: hidden; border-radius: 2px; background: #000; }
+.fpv-screen canvas { width: 100%; height: 100%; display: block; }
+.fpv-screen::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background:
+    repeating-linear-gradient(0deg, rgba(0,0,0,0.18) 0 1px, transparent 1px 3px),
+    radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.6));
+}
+
+.top {
+  position: absolute; top: 0; left: 0; right: 0;
+  display: flex; align-items: center; gap: 12px;
+  padding-block: calc(10px + env(safe-area-inset-top, 0px)) 10px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  pointer-events: none;
+}
+.brand { font-family: var(--font-display); font-weight: 700; font-size: 18px; letter-spacing: 0.12em; text-transform: uppercase; }
+.brand small { font-family: var(--font-mono); font-weight: 400; font-size: 11px; letter-spacing: 0.04em; color: var(--ink-dim); text-transform: none; margin-left: 8px; }
+.status { flex: 1; min-width: 0; color: var(--sel); font-size: 12px; letter-spacing: 0.04em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.status.patrol { color: var(--patrol); }
+.status.attack { color: var(--danger); }
+.status.stalk { color: var(--track); }
+.tally { font-size: 12px; color: var(--ink-dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tally b { color: var(--danger); font-weight: 500; }
+.pk { pointer-events: auto; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-dim); white-space: nowrap; }
+.pk input { width: 90px; accent-color: var(--danger); }
+.pk output { color: var(--ink); min-width: 3.5ch; font-variant-numeric: tabular-nums; }
+.top button { pointer-events: auto; }
+
+button {
+  font: 500 12px var(--font-mono); color: var(--ink);
+  background: #2a2e32; border: 1px solid var(--panel-edge); border-radius: 3px;
+  padding: 6px 8px; cursor: pointer;
+}
+button:hover { border-color: #5b636b; background: #32373c; }
+button:focus-visible { outline: 2px solid var(--sel); outline-offset: 1px; }
+button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
+#helpBtn { width: 30px; height: 30px; padding: 0; font-family: var(--font-display); font-weight: 700; }
+
+#help {
+  position: absolute; right: max(16px, env(safe-area-inset-right, 0px)); top: calc(52px + env(safe-area-inset-top, 0px));
+  width: 290px; max-width: calc(100% - 32px); max-height: calc(100% - 240px); overflow: auto;
+  background: var(--panel); border: 1px solid var(--panel-edge); border-radius: 4px; padding: 12px 14px;
+}
+#help h2 { font: 600 12px var(--font-display); letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-dim); margin: 10px 0 6px; }
+#help h2:first-child { margin-top: 0; }
+#help dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; margin: 0; }
+#help dt { color: var(--sel); white-space: nowrap; }
+#help dd { margin: 0; color: var(--ink); }
+
+.hud {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  display: flex; gap: 12px; align-items: stretch; flex-wrap: wrap;
+  padding-block: 10px calc(10px + env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  background: var(--panel); border-top: 1px solid var(--panel-edge);
+}
+.hud > section { min-width: 0; }
+.label { font: 600 10px var(--font-display); letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-dim); margin-bottom: 6px; }
+
+.groups { display: flex; flex-direction: column; }
+.slots { display: grid; grid-template-columns: repeat(5, 40px); gap: 4px; }
+.slot { height: 34px; padding: 2px; display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.slot b { font: 700 13px var(--font-display); }
+.slot span { font-size: 10px; color: var(--ink-dim); }
+.slot.empty { opacity: 0.45; }
+.slot.active { border-color: var(--sel); }
+
+.sel { flex: 1; display: flex; flex-direction: column; }
+.selhead { display: flex; gap: 10px; align-items: baseline; }
+.selhead .label { margin: 0; }
+#selcount { font-variant-numeric: tabular-nums; }
+.cells { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 6px; max-height: 76px; overflow: hidden; }
+.cell { width: 22px; height: 22px; padding: 0; display: grid; place-items: center; font-size: 9px; color: var(--ink-dim); }
+.cell.held { border-color: #7a8188; }
+.cell svg { width: 14px; height: 14px; }
+.more { font-size: 11px; color: var(--ink-dim); align-self: center; padding-left: 4px; }
+
+.cmds { display: flex; flex-direction: column; }
+.cmdgrid { display: grid; grid-template-columns: repeat(5, minmax(72px, auto)); gap: 4px; }
+.cmdgrid button { text-align: left; }
+#bDelete:hover { border-color: var(--danger); }
+
+@media (max-width: 720px) {
+  .brand small { display: none; }
+  .hud { gap: 8px; }
+  .sel { order: -1; flex-basis: 100%; }
+  .cells { max-height: 25px; }
+  .cmdgrid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .cmdgrid button { padding: 6px 4px; font-size: 11px; }
+  .tally { display: none; }
+  #fpv { width: 230px; }
+  .cmds { flex: 1; }
+  #help { max-height: calc(100% - 330px); }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <canvas id="c"></canvas>
+
+  <div class="top">
+    <div class="brand">Swarm Command<small>RTS-style drone control, proof of concept</small></div>
+    <div class="status" id="status"></div>
+    <label class="pk" for="pk">Kill chance <input type="range" id="pk" min="5" max="100" step="5" value="60"><output id="pkOut" for="pk">60%</output></label>
+    <div class="tally" id="tally"></div>
+    <button id="helpBtn" title="Show or hide controls" aria-label="Show or hide controls">?</button>
+  </div>
+
+  <section id="fpv" hidden aria-label="Drone camera feed">
+    <div class="fpv-head"><b id="fpvTitle">FPV</b><span id="fpvSub"></span></div>
+    <div class="fpv-screen"><canvas id="fpvc"></canvas></div>
+  </section>
+
+  <aside id="help">
+    <h2>Select</h2>
+    <dl>
+      <dt>Click</dt><dd>Select one drone</dd>
+      <dt>Drag</dt><dd>Box select</dd>
+      <dt>Shift + click/drag</dt><dd>Add or remove</dd>
+      <dt>Double-click</dt><dd>Select all on screen</dd>
+      <dt>Tab</dt><dd>Next drone's camera feed</dd>
+      <dt>Q / E (hold)</dt><dd>Turn the camera left / right</dd>
+      <dt>Z / C (hold)</dt><dd>Tilt the camera up / down</dd>
+      <dt>Ctrl+A / F2</dt><dd>Select every drone</dd>
+    </dl>
+    <h2>Command</h2>
+    <dl>
+      <dt>Right-click</dt><dd>Move</dd>
+      <dt>Right-click a target</dt><dd>All selected drones strike it</dd>
+      <dt>Shift + right-click</dt><dd>Queue a waypoint or target</dd>
+      <dt>A, then click</dt><dd>Attack-move: strike targets on the way</dd>
+      <dt>S, then click a target</dt><dd>Stalk: shadow it at a distance, camera locked on</dd>
+      <dt>H, then click a target</dt><dd>Hover directly over it, camera looks straight down</dd>
+      <dt>Kill chance</dt><dd>Each drone is spent on impact and kills with this probability</dd>
+      <dt>M, then click</dt><dd>Move (Shift to keep queuing)</dd>
+      <dt>P, then click</dt><dd>Patrol between here and there</dd>
+      <dt>X / G</dt><dd>Stop / Hold position</dd>
+      <dt>D</dt><dd>Spawn a drone at the cursor</dd>
+      <dt>T</dt><dd>Place a target at the cursor</dd>
+      <dt>Del</dt><dd>Remove selected</dd>
+    </dl>
+    <h2>Groups &amp; camera</h2>
+    <dl>
+      <dt>Ctrl or Alt + 1–0</dt><dd>Bind selection to a group</dd>
+      <dt>Shift + 1–0</dt><dd>Add selection to a group</dd>
+      <dt>1–0</dt><dd>Recall group (tap twice to jump to it)</dd>
+      <dt>Arrows / middle-drag</dt><dd>Pan</dd>
+      <dt>Wheel</dt><dd>Zoom</dd>
+    </dl>
+  </aside>
+
+  <footer class="hud">
+    <section class="groups">
+      <div class="label">Control groups</div>
+      <div class="slots" id="slots"></div>
+    </section>
+    <section class="sel">
+      <div class="selhead"><div class="label">Selection</div><div id="selcount"></div></div>
+      <div class="cells" id="cells"></div>
+    </section>
+    <section class="cmds">
+      <div class="label">Commands</div>
+      <div class="cmdgrid">
+        <button id="bMove"><kbd>M</kbd>Move</button>
+        <button id="bAttack"><kbd>A</kbd>Attack</button>
+        <button id="bStalk"><kbd>S</kbd>Stalk</button>
+        <button id="bStop"><kbd>X</kbd>Stop</button>
+        <button id="bHover"><kbd>H</kbd>Hover</button>
+        <button id="bHold"><kbd>G</kbd>Hold</button>
+        <button id="bPatrol"><kbd>P</kbd>Patrol</button>
+        <button id="bSpawn"><kbd>D</kbd>Spawn</button>
+        <button id="bTarget"><kbd>T</kbd>Target</button>
+        <button id="bDelete"><kbd>Del</kbd>Remove</button>
+      </div>
+    </section>
+  </footer>
+</div>
+
+<script>
+(() => {
+  const cvs = document.getElementById('c');
+  const ctx = cvs.getContext('2d');
+  const css = getComputedStyle(document.documentElement);
+  const C = name => css.getPropertyValue(name).trim();
+  const COL = { ground: C('--ground'), grid: C('--grid'), major: C('--grid-major'), ink: C('--ink'), dim: C('--ink-dim'), sel: C('--sel'), patrol: C('--patrol'), danger: C('--danger'), track: C('--track') };
+
+  const SPEED = 95, SEP = 17, PICK = 13;
+  const ACQUIRE = 95, IMPACT = 9, STALK_R = 110, NADIR_R = 26;
+  const ENDLESS = new Set(['patrol', 'stalk', 'hover']);
+  let PK = 0.6, expended = 0, dronesLost = false;
+  const floaters = [];
+  let W = 0, H = 0, DPR = 1;
+  const cam = { x: 0, y: 0, z: 1 };
+  const toWorld = (sx, sy) => ({ x: (sx - W / 2) / cam.z + cam.x, y: (sy - H / 2) / cam.z + cam.y });
+
+  let drones = [];
+  let targets = [];
+  let kills = 0;
+  let selected = new Set();
+  const groups = Array.from({ length: 10 }, () => []);
+  let nextId = 1, gidSeq = 0;
+  const arrived = new Set();
+  const pings = [];
+  let mode = null;            // 'move' | 'patrol' while waiting for a target click
+  let modeShiftUsed = false;
+  let mouse = { x: 0, y: 0, inside: false };
+  let drag = null, pan = null;
+  const keys = new Set();
+  let lastGroupTap = { n: -1, t: 0 };
+  let lastClick = { t: 0, id: 0 };
+
+  function resize() {
+    DPR = window.devicePixelRatio || 1;
+    W = cvs.clientWidth; H = cvs.clientHeight;
+    cvs.width = Math.round(W * DPR); cvs.height = Math.round(H * DPR);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  function spawn(x, y) {
+    const d = { id: nextId++, x, y, vx: 0, vy: 0, heading: -Math.PI / 2, rotor: Math.random() * 6, queue: [], hold: false };
+    drones.push(d);
+    return d;
+  }
+  function spawnTarget(x, y) {
+    const dir = Math.random() * 6.3;
+    const t = { x, y, home: { x, y }, dir, turret: dir, dead: false };
+    targets.push(t);
+    return t;
+  }
+  function nearestTarget(d, r) {
+    let best = null, bd = r;
+    for (const t of targets) {
+      const dist = Math.hypot(t.x - d.x, t.y - d.y);
+      if (dist < bd) { bd = dist; best = t; }
+    }
+    return best;
+  }
+  function strike(d, t) {
+    d.dead = true; dronesLost = true; expended++;
+    const hit = Math.random() < PK;
+    d.result = hit;
+    pings.push({ x: t.x, y: t.y, t: 0, color: hit ? COL.danger : COL.dim });
+    floaters.push({ x: t.x, y: t.y - 16, t: 0, text: hit ? 'KILL' : 'MISS', color: hit ? COL.danger : COL.dim });
+    if (hit) {
+      t.dead = true; kills++;
+      for (let k = 1; k < 3; k++) pings.push({ x: t.x, y: t.y, t: -k * 0.08, color: COL.danger });
+    }
+  }
+  function pickTarget(wx, wy) {
+    let best = null, bd = 14 / Math.min(cam.z, 1.5);
+    for (const t of targets) {
+      const dist = Math.hypot(t.x - wx, t.y - wy);
+      if (dist < bd) { bd = dist; best = t; }
+    }
+    return best;
+  }
+
+  // ---------- commands ----------
+  function lastPoint(d) {
+    const o = d.queue[d.queue.length - 1];
+    if (!o) return { x: d.x, y: d.y };
+    if (o.target) return { x: o.target.x, y: o.target.y };
+    return o.type === 'patrol' ? { x: o.b.x, y: o.b.y } : { x: o.x, y: o.y };
+  }
+
+  function issue(type, wx, wy, queue, target) {
+    const sel = [...selected];
+    if (!sel.length) return;
+    const gid = ++gidSeq;
+    const base = sel.map(d => queue ? lastPoint(d) : { x: d.x, y: d.y });
+    let cx = 0, cy = 0, minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of base) {
+      cx += p.x; cy += p.y;
+      minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+      minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+    }
+    cx /= base.length; cy /= base.length;
+    const n = sel.length;
+    // "Magic box": clicking inside the group's own footprint pulls everyone to the point;
+    // clicking outside keeps the formation, compressed if it is too spread out.
+    const inside = n > 1 && wx > minX - 8 && wx < maxX + 8 && wy > minY - 8 && wy < maxY + 8;
+    const spread = Math.max(0, ...base.map(p => Math.hypot(p.x - cx, p.y - cy)));
+    const maxSpread = 13 * Math.sqrt(n) + 10;
+    const scale = inside ? 0 : spread > maxSpread ? maxSpread / spread : 1;
+    const slack = inside ? 10 + 8 * Math.sqrt(n) : 10;
+
+    sel.forEach((d, i) => {
+      const tx = wx + (base[i].x - cx) * scale, ty = wy + (base[i].y - cy) * scale;
+      const order = target ? { type, target }
+        : type === 'patrol' ? { type, a: { x: base[i].x, y: base[i].y }, b: { x: tx, y: ty }, toB: true }
+        : { type, x: tx, y: ty, gid, slack };
+      if (!queue) { d.queue = [order]; d.hold = false; }
+      else {
+        const last = d.queue[d.queue.length - 1];
+        if (!last || !ENDLESS.has(last.type)) d.queue.push(order); // patrol, stalk and hover never end on their own
+        d.hold = false;
+      }
+    });
+    pings.push({ x: wx, y: wy, t: 0, color: type === 'patrol' ? COL.patrol : type === 'move' ? COL.sel : type === 'stalk' || type === 'hover' ? COL.track : COL.danger });
+  }
+
+  function stop() { for (const d of selected) { d.queue = []; d.hold = false; } renderHUD(); }
+  function hold() { for (const d of selected) { d.queue = []; d.hold = true; d.vx *= 0.3; d.vy *= 0.3; } renderHUD(); }
+  function removeSelected() {
+    drones = drones.filter(d => !selected.has(d));
+    selected.clear();
+    renderHUD();
+  }
+  function setMode(m) {
+    mode = selected.size ? m : null;
+    modeShiftUsed = false;
+    cvs.classList.toggle('targeting', !!mode);
+    renderStatus();
+  }
+
+  // ---------- simulation ----------
+  function update(dt) {
+    for (const d of drones) {
+      let ax = 0, ay = 0;
+      let o = d.queue[0];
+      while (o && o.target && o.target.dead) { d.queue.shift(); o = d.queue[0]; }
+      // attack-move and patrol pick up targets they pass; plain move ignores them
+      const seeks = o && (o.type === 'amove' || o.type === 'patrol');
+      if (!seeks || (d.engage && d.engage.dead)) d.engage = null;
+      if (seeks && !d.engage) d.engage = nearestTarget(d, ACQUIRE);
+      const foe = o && o.type === 'attack' ? o.target : d.engage;
+      d.foe = foe;
+      if (foe) {
+        // dive straight in; on contact the drone is spent and rolls against the kill chance
+        const ex = foe.x - d.x, ey = foe.y - d.y, ed = Math.hypot(ex, ey) || 0.01;
+        if (ed < IMPACT) { strike(d, foe); continue; }
+        ax += ((ex / ed) * SPEED * 1.15 - d.vx) * 6;
+        ay += ((ey / ed) * SPEED * 1.15 - d.vy) * 6;
+      } else if (o && o.type === 'hover') {
+        // sit directly above the target and ride along with it
+        const t = o.target, ex = t.x - d.x, ey = t.y - d.y;
+        const ed = Math.hypot(ex, ey) || 0.01, sp = Math.min(SPEED, ed * 2.6);
+        ax += ((ex / ed) * sp - d.vx) * 4;
+        ay += ((ey / ed) * sp - d.vy) * 4;
+      } else if (o && o.type === 'stalk') {
+        // shadow the target: hold a fixed standoff distance on whatever side the drone is on
+        const t = o.target, dx = d.x - t.x, dy = d.y - t.y, dist = Math.hypot(dx, dy) || 0.01;
+        const ex = t.x + (dx / dist) * STALK_R - d.x, ey = t.y + (dy / dist) * STALK_R - d.y;
+        const ed = Math.hypot(ex, ey) || 0.01, sp = Math.min(SPEED, ed * 2.6);
+        ax += ((ex / ed) * sp - d.vx) * 4;
+        ay += ((ey / ed) * sp - d.vy) * 4;
+      } else if (o) {
+        const p = o.type === 'patrol' ? (o.toB ? o.b : o.a) : o;
+        const dx = p.x - d.x, dy = p.y - d.y, dist = Math.hypot(dx, dy);
+        let done = false;
+        if (o.type === 'patrol') {
+          if (dist < 6) o.toB = !o.toB;
+        } else if (dist < 5 || (arrived.has(o.gid) && dist < o.slack)) {
+          arrived.add(o.gid);
+          done = true;
+        }
+        if (done) d.queue.shift();
+        else {
+          const sp = Math.max(Math.min(SPEED, dist * 2.6), 22);
+          ax += ((dx / dist) * sp - d.vx) * 5;
+          ay += ((dy / dist) * sp - d.vy) * 5;
+        }
+      } else {
+        ax -= d.vx * 4; ay -= d.vy * 4;
+      }
+      // separation: drones keep a personal bubble so groups spread instead of stacking
+      if (!d.hold) {
+        for (const e of drones) {
+          if (e === d) continue;
+          const dx = d.x - e.x, dy = d.y - e.y;
+          if (Math.abs(dx) > SEP || Math.abs(dy) > SEP) continue;
+          const dist = Math.hypot(dx, dy) || 0.01;
+          if (dist < SEP) {
+            const f = ((SEP - dist) / SEP) * 520;
+            ax += (dx / dist) * f; ay += (dy / dist) * f;
+          }
+        }
+      }
+      d.vx += ax * dt; d.vy += ay * dt;
+      const s = Math.hypot(d.vx, d.vy), max = SPEED * 1.15;
+      if (s > max) { d.vx *= max / s; d.vy *= max / s; }
+      if (d.hold) { d.vx *= 0.8; d.vy *= 0.8; }
+      d.x += d.vx * dt; d.y += d.vy * dt;
+      if (s > 8) {
+        const target = Math.atan2(d.vy, d.vx);
+        let diff = target - d.heading;
+        diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+        d.heading += diff * Math.min(1, dt * 8);
+      }
+      d.rotor += dt * 38;
+    }
+    if (dronesLost) {
+      dronesLost = false;
+      drones = drones.filter(d => !d.dead);
+      for (const d of [...selected]) if (d.dead) selected.delete(d);
+      renderHUD();
+    }
+    for (const f of floaters) { f.t += dt; f.y -= 18 * dt; }
+    while (floaters.length && floaters[0].t > 1.2) floaters.shift();
+    for (const t of targets) {
+      if (t.dead) continue;
+      // slow wander, leashed to where it was placed
+      t.dir += (Math.random() - 0.5) * dt * 3;
+      const hx = t.home.x - t.x, hy = t.home.y - t.y;
+      if (Math.hypot(hx, hy) > 70) t.dir += wrap(Math.atan2(hy, hx) - t.dir) * Math.min(1, dt * 2);
+      t.x += Math.cos(t.dir) * 12 * dt; t.y += Math.sin(t.dir) * 12 * dt;
+      // turret swings toward the nearest drone it can see, otherwise faces forward
+      let near = null, nd = 220;
+      for (const d of drones) { const dd = Math.hypot(d.x - t.x, d.y - t.y); if (dd < nd) { nd = dd; near = d; } }
+      const aim = near ? Math.atan2(near.y - t.y, near.x - t.x) : t.dir;
+      t.turret += wrap(aim - t.turret) * Math.min(1, dt * 1.5);
+    }
+    targets = targets.filter(t => !t.dead);
+    for (const p of pings) p.t += dt;
+    while (pings.length && pings[0].t > 0.6) pings.shift();
+
+    const panSpeed = 520 / cam.z * dt;
+    if (keys.has('ArrowLeft')) cam.x -= panSpeed;
+    if (keys.has('ArrowRight')) cam.x += panSpeed;
+    if (keys.has('ArrowUp')) cam.y -= panSpeed;
+    if (keys.has('ArrowDown')) cam.y += panSpeed;
+  }
+
+  // ---------- rendering ----------
+  function drawGrid() {
+    const tl = toWorld(0, 0), br = toWorld(W, H);
+    const step = 32;
+    ctx.lineWidth = 1 / cam.z;
+    for (const [s, color] of [[step, COL.grid], [step * 5, COL.major]]) {
+      ctx.strokeStyle = color;
+      ctx.beginPath();
+      for (let x = Math.floor(tl.x / s) * s; x <= br.x; x += s) { ctx.moveTo(x, tl.y); ctx.lineTo(x, br.y); }
+      for (let y = Math.floor(tl.y / s) * s; y <= br.y; y += s) { ctx.moveTo(tl.x, y); ctx.lineTo(br.x, y); }
+      ctx.stroke();
+    }
+  }
+
+  function drawPaths() {
+    ctx.lineWidth = 1.2 / cam.z;
+    for (const d of selected) {
+      let px = d.x, py = d.y;
+      for (const o of d.queue) {
+        if (o.target) {
+          ctx.strokeStyle = o.type === 'attack' ? COL.danger : COL.track; ctx.globalAlpha = 0.5;
+          if (o.type !== 'attack') ctx.setLineDash([5 / cam.z, 4 / cam.z]);
+          ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(o.target.x, o.target.y); ctx.stroke();
+          ctx.setLineDash([]);
+          px = o.target.x; py = o.target.y;
+          continue;
+        }
+        if (o.type === 'patrol') {
+          ctx.strokeStyle = COL.patrol; ctx.globalAlpha = 0.55;
+          ctx.setLineDash([5 / cam.z, 4 / cam.z]);
+          ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo((o.toB ? o.b : o.a).x, (o.toB ? o.b : o.a).y); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(o.a.x, o.a.y); ctx.lineTo(o.b.x, o.b.y); ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.fillStyle = COL.patrol;
+          for (const q of [o.a, o.b]) { ctx.beginPath(); ctx.arc(q.x, q.y, 2.5 / cam.z, 0, 7); ctx.fill(); }
+          break;
+        }
+        const c = o.type === 'amove' ? COL.danger : COL.sel;
+        ctx.strokeStyle = c; ctx.globalAlpha = 0.5;
+        ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(o.x, o.y); ctx.stroke();
+        ctx.fillStyle = c;
+        ctx.beginPath(); ctx.arc(o.x, o.y, 2.5 / cam.z, 0, 7); ctx.fill();
+        px = o.x; py = o.y;
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawTarget(t) {
+    ctx.strokeStyle = COL.danger; ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.arc(t.x, t.y, 9, 0, 7); ctx.stroke();
+    ctx.beginPath(); ctx.arc(t.x, t.y, 3, 0, 7); ctx.stroke();
+    ctx.beginPath();
+    for (const [ux, uy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { ctx.moveTo(t.x + ux * 6, t.y + uy * 6); ctx.lineTo(t.x + ux * 13, t.y + uy * 13); }
+    ctx.stroke();
+    // heading marker so the map matches what the cameras show
+    const c = Math.cos(t.dir), s = Math.sin(t.dir);
+    ctx.fillStyle = COL.danger;
+    ctx.beginPath();
+    ctx.moveTo(t.x + c * 19, t.y + s * 19);
+    ctx.lineTo(t.x + c * 14 - s * 3.5, t.y + s * 14 + c * 3.5);
+    ctx.lineTo(t.x + c * 14 + s * 3.5, t.y + s * 14 - c * 3.5);
+    ctx.closePath(); ctx.fill();
+  }
+
+  function drawDrone(d) {
+    const isSel = selected.has(d);
+    if (isSel) {
+      ctx.strokeStyle = COL.sel; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.ellipse(d.x, d.y + 2, 11, 9, 0, 0, 7); ctx.stroke();
+    }
+    ctx.save();
+    ctx.translate(d.x, d.y);
+    ctx.rotate(d.heading + Math.PI / 4);
+    ctx.strokeStyle = COL.ink; ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.moveTo(-5.5, -5.5); ctx.lineTo(5.5, 5.5); ctx.moveTo(5.5, -5.5); ctx.lineTo(-5.5, 5.5); ctx.stroke();
+    for (const [rx, ry] of [[-5.5, -5.5], [5.5, -5.5], [5.5, 5.5], [-5.5, 5.5]]) {
+      ctx.strokeStyle = 'rgba(216,221,226,0.35)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(rx, ry, 3.6, 0, 7); ctx.stroke();
+      ctx.strokeStyle = COL.ink; ctx.lineWidth = 1.2;
+      const a = d.rotor + rx;
+      ctx.beginPath(); ctx.moveTo(rx + Math.cos(a) * 3.4, ry + Math.sin(a) * 3.4); ctx.lineTo(rx - Math.cos(a) * 3.4, ry - Math.sin(a) * 3.4); ctx.stroke();
+    }
+    ctx.rotate(-Math.PI / 4);
+    ctx.fillStyle = '#3a4046'; ctx.strokeStyle = COL.ink; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.rect(-3, -2.5, 6, 5); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = d.hold ? COL.patrol : COL.sel;
+    ctx.beginPath(); ctx.arc(3.2, 0, 1.3, 0, 7); ctx.fill();
+    ctx.restore();
+  }
+
+  function render() {
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.fillStyle = COL.ground; ctx.fillRect(0, 0, W, H);
+    ctx.setTransform(DPR * cam.z, 0, 0, DPR * cam.z, DPR * (W / 2 - cam.x * cam.z), DPR * (H / 2 - cam.y * cam.z));
+    drawGrid();
+    drawPaths();
+    for (const t of targets) drawTarget(t);
+    ctx.font = `600 ${12 / cam.z}px "IBM Plex Mono", monospace`;
+    ctx.textAlign = 'center';
+    for (const f of floaters) {
+      ctx.globalAlpha = Math.max(0, 1 - f.t / 1.2);
+      ctx.fillStyle = f.color;
+      ctx.fillText(f.text, f.x, f.y);
+    }
+    ctx.globalAlpha = 1;
+    for (const p of pings) {
+      if (p.t < 0) continue;
+      ctx.strokeStyle = p.color; ctx.globalAlpha = 1 - p.t / 0.6; ctx.lineWidth = 1.5 / cam.z;
+      ctx.beginPath(); ctx.arc(p.x, p.y, (4 + p.t * 30) / cam.z, 0, 7); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    const cam0 = fpv.drone;
+    if (cam0 && !cam0.dead && fpv.lost <= 0) {
+      // camera field of view for the drone whose feed is open
+      const a = fpv.look, r = SIGHT;
+      const g = ctx.createRadialGradient(cam0.x, cam0.y, 4, cam0.x, cam0.y, r);
+      g.addColorStop(0, 'rgba(250,204,21,0.13)'); g.addColorStop(1, 'rgba(250,204,21,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.moveTo(cam0.x, cam0.y); ctx.arc(cam0.x, cam0.y, r, a - HALF_FOV, a + HALF_FOV); ctx.closePath(); ctx.fill();
+    }
+    for (const d of drones) drawDrone(d);
+
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    if (drag && drag.moved) {
+      const x = Math.min(drag.sx, drag.ex), y = Math.min(drag.sy, drag.ey);
+      const w = Math.abs(drag.ex - drag.sx), h = Math.abs(drag.ey - drag.sy);
+      ctx.fillStyle = 'rgba(74,222,128,0.08)'; ctx.fillRect(x, y, w, h);
+      ctx.strokeStyle = COL.sel; ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 0.5, w, h);
+    }
+  }
+
+  let last = performance.now(), hudTimer = 0;
+  function frame(now) {
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+    update(dt);
+    render();
+    updateFpv(dt);
+    drawFpv(dt);
+    hudTimer += dt;
+    if (hudTimer > 0.25) { hudTimer = 0; refreshCells(); renderTally(); }
+    requestAnimationFrame(frame);
+  }
+
+  // ---------- selection ----------
+  function pick(wx, wy) {
+    let best = null, bd = PICK / Math.min(cam.z, 1.5);
+    for (const d of drones) {
+      const dist = Math.hypot(d.x - wx, d.y - wy);
+      if (dist < bd) { bd = dist; best = d; }
+    }
+    return best;
+  }
+  function onScreen() {
+    const tl = toWorld(0, 0), br = toWorld(W, H);
+    return drones.filter(d => d.x >= tl.x && d.x <= br.x && d.y >= tl.y && d.y <= br.y);
+  }
+  function selectOnly(list) { selected = new Set(list); renderHUD(); }
+
+  // ---------- input ----------
+  cvs.addEventListener('contextmenu', e => e.preventDefault());
+  cvs.addEventListener('pointerdown', e => {
+    cvs.setPointerCapture(e.pointerId);
+    const w = toWorld(e.offsetX, e.offsetY);
+    if (e.button === 1) { pan = { sx: e.offsetX, sy: e.offsetY, cx: cam.x, cy: cam.y }; e.preventDefault(); return; }
+    if (e.button === 2) {
+      if (mode) { setMode(null); return; }
+      const tgt = pickTarget(w.x, w.y);
+      if (tgt) issue('attack', tgt.x, tgt.y, e.shiftKey, tgt);
+      else issue('move', w.x, w.y, e.shiftKey);
+      return;
+    }
+    if (e.button !== 0) return;
+    if (mode) {
+      const tgt = mode === 'attack' || mode === 'stalk' || mode === 'hover' ? pickTarget(w.x, w.y) : null;
+      if (mode === 'stalk' || mode === 'hover') { if (!tgt) return; issue(mode, tgt.x, tgt.y, e.shiftKey, tgt); }
+      else if (tgt) issue('attack', tgt.x, tgt.y, e.shiftKey, tgt);
+      else issue(mode === 'attack' ? 'amove' : mode, w.x, w.y, e.shiftKey);
+      if (e.shiftKey) modeShiftUsed = true; else setMode(null);
+      return;
+    }
+    drag = { sx: e.offsetX, sy: e.offsetY, ex: e.offsetX, ey: e.offsetY, moved: false, shift: e.shiftKey, ctrl: e.ctrlKey || e.metaKey };
+  });
+  cvs.addEventListener('pointermove', e => {
+    mouse = { x: e.offsetX, y: e.offsetY, inside: true };
+    if (pan) { cam.x = pan.cx - (e.offsetX - pan.sx) / cam.z; cam.y = pan.cy - (e.offsetY - pan.sy) / cam.z; return; }
+    if (drag) {
+      drag.ex = e.offsetX; drag.ey = e.offsetY;
+      if (Math.hypot(drag.ex - drag.sx, drag.ey - drag.sy) > 5) drag.moved = true;
+    }
+  });
+  cvs.addEventListener('pointerleave', () => { mouse.inside = false; });
+  cvs.addEventListener('pointerup', e => {
+    if (pan) { pan = null; return; }
+    if (!drag) return;
+    const dg = drag; drag = null;
+    if (dg.moved) {
+      const a = toWorld(Math.min(dg.sx, dg.ex), Math.min(dg.sy, dg.ey));
+      const b = toWorld(Math.max(dg.sx, dg.ex), Math.max(dg.sy, dg.ey));
+      const inBox = drones.filter(d => d.x >= a.x && d.x <= b.x && d.y >= a.y && d.y <= b.y);
+      if (dg.shift) { inBox.forEach(d => selected.add(d)); renderHUD(); }
+      else selectOnly(inBox);
+      return;
+    }
+    const w = toWorld(dg.sx, dg.sy);
+    const hit = pick(w.x, w.y);
+    const now = performance.now();
+    const dbl = hit && lastClick.id === hit.id && now - lastClick.t < 320;
+    lastClick = { t: now, id: hit ? hit.id : 0 };
+    if (hit && (dg.ctrl || dbl)) {
+      const list = onScreen();
+      if (dg.shift) { list.forEach(d => selected.add(d)); renderHUD(); } else selectOnly(list);
+    } else if (dg.shift) {
+      if (hit) { selected.has(hit) ? selected.delete(hit) : selected.add(hit); renderHUD(); }
+    } else selectOnly(hit ? [hit] : []);
+  });
+  cvs.addEventListener('wheel', e => {
+    e.preventDefault();
+    const before = toWorld(e.offsetX, e.offsetY);
+    cam.z = Math.min(3, Math.max(0.4, cam.z * Math.exp(-e.deltaY * 0.0015)));
+    const after = toWorld(e.offsetX, e.offsetY);
+    cam.x += before.x - after.x; cam.y += before.y - after.y;
+  }, { passive: false });
+
+  function groupKey(n, e) {
+    const ctrl = e.ctrlKey || e.metaKey || e.altKey;
+    if (ctrl) { groups[n] = [...selected]; renderHUD(); return; }
+    if (e.shiftKey) {
+      const set = new Set(groups[n].filter(d => drones.includes(d)));
+      selected.forEach(d => set.add(d));
+      groups[n] = [...set]; renderHUD(); return;
+    }
+    recallGroup(n);
+  }
+  function recallGroup(n) {
+    const alive = groups[n].filter(d => drones.includes(d));
+    groups[n] = alive;
+    if (!alive.length) return;
+    const now = performance.now();
+    if (lastGroupTap.n === n && now - lastGroupTap.t < 380) {
+      cam.x = alive.reduce((s, d) => s + d.x, 0) / alive.length;
+      cam.y = alive.reduce((s, d) => s + d.y, 0) / alive.length;
+    }
+    lastGroupTap = { n, t: now };
+    selectOnly(alive);
+  }
+  function spawnAtCursor() {
+    const p = mouse.inside ? toWorld(mouse.x, mouse.y) : { x: cam.x + (Math.random() - 0.5) * 40, y: cam.y + (Math.random() - 0.5) * 40 };
+    spawn(p.x, p.y);
+    pings.push({ x: p.x, y: p.y, t: 0, color: COL.ink });
+    renderHUD();
+  }
+  function targetAtCursor() {
+    const p = mouse.inside ? toWorld(mouse.x, mouse.y) : { x: cam.x + (Math.random() - 0.5) * 200, y: cam.y + (Math.random() - 0.5) * 200 };
+    spawnTarget(p.x, p.y);
+    pings.push({ x: p.x, y: p.y, t: 0, color: COL.danger });
+    renderTally();
+  }
+
+  window.addEventListener('keydown', e => {
+    if (e.target instanceof HTMLInputElement) return;
+    const c = e.code;
+    if (c.startsWith('Arrow')) { keys.add(c); e.preventDefault(); return; }
+    const digit = c.match(/^Digit(\d)$/);
+    if (digit) { e.preventDefault(); groupKey(+digit[1], e); return; }
+    if ((e.ctrlKey || e.metaKey) && c === 'KeyA') { e.preventDefault(); selectOnly(drones); return; }
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    switch (c) {
+      case 'KeyM': setMode('move'); break;
+      case 'KeyP': setMode('patrol'); break;
+      case 'KeyA': setMode('attack'); break;
+      case 'KeyT': targetAtCursor(); break;
+      case 'Tab': e.preventDefault(); cycleFpv(); break;
+      case 'KeyS': setMode('stalk'); break;
+      case 'KeyX': stop(); break;
+      case 'KeyH': setMode('hover'); break;
+      case 'KeyG': hold(); break;
+      case 'KeyD': spawnAtCursor(); break;
+      case 'KeyQ': case 'KeyE': case 'KeyZ': case 'KeyC': keys.add(c); break;
+      case 'F2': e.preventDefault(); selectOnly(drones); break;
+      case 'Escape': if (mode) setMode(null); else selectOnly([]); break;
+      case 'Delete': case 'Backspace': e.preventDefault(); removeSelected(); break;
+    }
+  });
+  window.addEventListener('keyup', e => {
+    keys.delete(e.code);
+    if (e.key === 'Shift' && mode && modeShiftUsed) setMode(null);
+  });
+  window.addEventListener('blur', () => keys.clear());
+
+  // ---------- FPV camera feed (simulated) ----------
+  const fpvEl = document.getElementById('fpv');
+  const fpvTitle = document.getElementById('fpvTitle'), fpvSub = document.getElementById('fpvSub');
+  const fc = document.getElementById('fpvc'), fx = fc.getContext('2d');
+  const fpv = { drone: null, lost: 0, scroll: 0, bank: 0, pitch: 0, prevHeading: 0, clock: 0, label: '', look: 0, tilt: 0 };
+  const TILT_UP = 0.35, TILT_DOWN = 1.2; // about 20° up and 70° down
+  const HALF_FOV = Math.atan(0.5 / 0.9), SIGHT = 520;
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
+
+  function watch(d) {
+    // switching feeds is a hard cut: keep the camera's compass direction across the group,
+    // snap straight onto a stalked target, and skip the pitch/bank easing for one frame
+    const had = fpv.drone && !fpv.drone.dead;
+    fpv.drone = d; fpv.lost = 0;
+    if (!d) return;
+    fpv.prevHeading = d.heading; fpv.snap = true;
+    const o = d.queue[0];
+    if (o && o.type === 'stalk' && !o.target.dead) fpv.look = Math.atan2(o.target.y - d.y, o.target.x - d.x);
+    else if (!had) { fpv.look = d.heading; fpv.tilt = 0; }
+  }
+  function cycleFpv() {
+    const sel = [...selected];
+    if (sel.length < 2 || fpv.lost > 0) return;
+    watch(sel[(sel.indexOf(fpv.drone) + 1) % sel.length]);
+  }
+  function updateFpv(dt) {
+    fpv.clock += dt;
+    // camera gimbal: holds a fixed compass direction while the drone turns; Q / E rotate it
+    if (keys.has('KeyQ')) fpv.look -= 1.8 * dt;
+    if (keys.has('KeyE')) fpv.look += 1.8 * dt;
+    if (keys.has('KeyZ')) fpv.tilt = Math.max(-TILT_UP, fpv.tilt - 1.1 * dt);
+    if (keys.has('KeyC')) fpv.tilt = Math.min(TILT_DOWN, fpv.tilt + 1.1 * dt);
+    // while stalking, the gimbal tracks the target on its own
+    const d0 = fpv.drone, o0 = d0 && !d0.dead ? d0.queue[0] : null;
+    if (o0 && (o0.type === 'stalk' || (o0.type === 'hover' && Math.hypot(o0.target.x - d0.x, o0.target.y - d0.y) >= NADIR_R)) && !o0.target.dead) {
+      const want = Math.atan2(o0.target.y - d0.y, o0.target.x - d0.x);
+      fpv.look += wrap(want - fpv.look) * Math.min(1, dt * 6);
+    }
+    fpv.look = wrap(fpv.look);
+    if (fpv.lost > 0) {
+      fpv.lost -= dt;
+      if (fpv.lost <= 0) fpv.drone = null;
+    } else if (fpv.drone && fpv.drone.dead) {
+      fpv.lost = 1.8;
+    }
+    if (fpv.lost <= 0 && !selected.has(fpv.drone)) watch(selected.size ? selected.values().next().value : null);
+    const show = !!fpv.drone;
+    if (fpvEl.hidden === show) fpvEl.hidden = !show;
+    if (!show) return;
+    const sel = [...selected], i = sel.indexOf(fpv.drone);
+    const sub = fpv.lost > 0 ? 'signal lost' : sel.length > 1 ? `${i + 1} of ${sel.length} · Tab for next` : 'live';
+    const label = `Drone ${fpv.drone.id}|${sub}`;
+    if (label !== fpv.label) {
+      fpv.label = label;
+      fpvTitle.textContent = `Drone ${fpv.drone.id}`;
+      fpvSub.textContent = sub;
+    }
+  }
+
+  function osdText(text, x, y, align, color) {
+    fx.textAlign = align;
+    fx.fillStyle = 'rgba(0,0,0,0.6)'; fx.fillText(text, x + 1, y + 1);
+    fx.fillStyle = color; fx.fillText(text, x, y);
+  }
+
+  const shade = (hex, k) => {
+    const n = parseInt(hex.slice(1), 16);
+    return `rgb(${(((n >> 16) & 255) * k) | 0},${(((n >> 8) & 255) * k) | 0},${((n & 255) * k) | 0})`;
+  };
+  const LIGHT = (() => { const v = [0.45, -0.55, 0.7], m = Math.hypot(...v); return v.map(c => c / m); })();
+
+  // a tank built from boxes in world space, so each camera sees it from the side it is actually on
+  function drawTank3D(t, d, view, w, horizon, focal, camH) {
+    const cv = Math.cos(view), sv = Math.sin(view);
+    const proj = (x, y, z) => {
+      const dx = x - d.x, dy = y - d.y;
+      const f = dx * cv + dy * sv, r = -dx * sv + dy * cv;
+      return f < 0.8 ? null : { x: w / 2 + (r / f) * focal, y: horizon + ((camH - z) / f) * focal, f };
+    };
+    const box = (yaw, off, hl, hw) => {
+      const c = Math.cos(yaw), s = Math.sin(yaw);
+      const ox = t.x + c * off, oy = t.y + s * off;
+      const corner = (a, b) => [ox + c * a * hl - s * b * hw, oy + s * a * hl + c * b * hw];
+      return { c, s, q: [corner(1, 1), corner(-1, 1), corner(-1, -1), corner(1, -1)] };
+    };
+
+    const shadow = box(t.dir, 0, 8.5, 5.5).q.map(p => proj(p[0], p[1], 0));
+    if (shadow.every(Boolean)) {
+      fx.fillStyle = 'rgba(0,0,0,0.3)';
+      fx.beginPath(); shadow.forEach((p, i) => i ? fx.lineTo(p.x, p.y) : fx.moveTo(p.x, p.y)); fx.closePath(); fx.fill();
+    }
+
+    // [yaw, offset along yaw, half length, half width, z0, z1, color]
+    const parts = [
+      [t.dir, 0, 7, 4, 0, 2.7, '#23261e'],
+      [t.dir, 0, 6.6, 3.3, 2.7, 4.2, '#4b5337'],
+      [t.turret, -0.4, 2.8, 2.3, 4.2, 6, '#58613f'],
+      [t.turret, 6, 3.5, 0.32, 5.1, 5.7, '#58613f'],
+    ];
+    const faces = [];
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const [yaw, off, hl, hw, z0, z1, col] of parts) {
+      const { c, s, q } = box(yaw, off, hl, hw);
+      const normals = [[-s, c], [-c, -s], [s, -c], [c, s]];
+      const sides = [{ pts: q.map(p => [p[0], p[1], z1]), n: [0, 0, 1] }];
+      for (let i = 0; i < 4; i++) {
+        const a = q[i], b = q[(i + 1) % 4];
+        sides.push({ pts: [[a[0], a[1], z0], [b[0], b[1], z0], [b[0], b[1], z1], [a[0], a[1], z1]], n: [normals[i][0], normals[i][1], 0] });
+      }
+      for (const sd of sides) {
+        const cx = sd.pts.reduce((v, p) => v + p[0], 0) / 4;
+        const cy = sd.pts.reduce((v, p) => v + p[1], 0) / 4;
+        const cz = sd.pts.reduce((v, p) => v + p[2], 0) / 4;
+        // skip faces pointing away from the camera
+        if (sd.n[0] * (d.x - cx) + sd.n[1] * (d.y - cy) + sd.n[2] * (camH - cz) <= 0) continue;
+        const pp = sd.pts.map(p => proj(p[0], p[1], p[2]));
+        if (pp.some(p => !p)) return null;
+        const lit = 0.5 + 0.5 * Math.max(0, sd.n[0] * LIGHT[0] + sd.n[1] * LIGHT[1] + sd.n[2] * LIGHT[2]);
+        faces.push({ pp, depth: pp.reduce((v, p) => v + p.f, 0) / 4, color: shade(col, lit) });
+        for (const p of pp) { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y); }
+      }
+    }
+    if (!faces.length) return null;
+    faces.sort((a, b) => b.depth - a.depth);
+    fx.strokeStyle = 'rgba(0,0,0,0.3)'; fx.lineWidth = 0.6;
+    for (const fc of faces) {
+      fx.fillStyle = fc.color;
+      fx.beginPath(); fc.pp.forEach((p, i) => i ? fx.lineTo(p.x, p.y) : fx.moveTo(p.x, p.y)); fx.closePath();
+      fx.fill(); fx.stroke();
+    }
+    return { x: (minX + maxX) / 2, y: (minY + maxY) / 2, bw: Math.max(10, (maxX - minX) / 2 + 3), bh: Math.max(8, (maxY - minY) / 2 + 3) };
+  }
+
+  // friendly altitude in camera units: cruising drones sit near the camera's height, striking ones drop toward the ground
+  function droneAlt(o, camH) {
+    const foe = o.foe && !o.foe.dead ? o.foe : null;
+    if (foe) return camH * clamp(Math.hypot(foe.x - o.x, foe.y - o.y) / 160, 0.05, 1);
+    return camH + (((o.id * 37) % 9) - 4) * 0.8;
+  }
+
+  function drawFriendly(o, dist, d, view, w, horizon, focal, camH) {
+    const cv = Math.cos(view), sv = Math.sin(view);
+    const dx = o.x - d.x, dy = o.y - d.y;
+    const f = dx * cv + dy * sv, r = -dx * sv + dy * cv;
+    if (f < 3) return;
+    const z = droneAlt(o, camH), s = focal / f;
+    const x = w / 2 + (r / f) * focal, y = horizon + ((camH - z) / f) * focal;
+    const squash = clamp(((camH - z) / f) * 2 + 0.25, 0.18, 1); // flatter when level, rounder seen from above
+    fx.save(); fx.translate(x, y);
+    // true-ish scale: a quadcopter is tiny next to a tank, so keep a minimum size to stay visible
+    const arm = Math.max(2.5, 0.45 * s), rr = arm * 0.62;
+    fx.strokeStyle = '#cfd6dd'; fx.lineWidth = Math.max(1, arm * 0.13);
+    fx.beginPath();
+    fx.moveTo(-arm, -arm * squash); fx.lineTo(arm, arm * squash);
+    fx.moveTo(arm, -arm * squash); fx.lineTo(-arm, arm * squash);
+    fx.stroke();
+    fx.fillStyle = 'rgba(220,226,230,0.18)'; fx.lineWidth = 0.8;
+    for (const [px, py] of [[-arm, -arm], [arm, -arm], [arm, arm], [-arm, arm]]) {
+      fx.beginPath(); fx.ellipse(px, py * squash, rr, rr * squash, 0, 0, 7); fx.fill(); fx.stroke();
+    }
+    fx.fillStyle = '#3a4046'; fx.fillRect(-arm * 0.3, -arm * 0.3 * squash - arm * 0.15, arm * 0.6, arm * 0.6 * squash + arm * 0.2);
+    // IFF tag so friendlies never read as targets
+    const top = -arm * squash - rr * squash - 6;
+    fx.fillStyle = COL.sel;
+    fx.beginPath(); fx.moveTo(0, top); fx.lineTo(-3.5, top - 5); fx.lineTo(3.5, top - 5); fx.closePath(); fx.fill();
+    fx.restore();
+    if (dist < 280) {
+      fx.font = '500 9px "IBM Plex Mono", monospace';
+      fx.textAlign = 'center'; fx.fillStyle = COL.sel;
+      fx.fillText(`D${o.id}`, x, y + top - 8);
+    }
+  }
+
+  // straight-down view used while a drone hovers over its target
+  function drawNadir(d, view, w, h, hv, contacts, drawn) {
+    const k = h / 70, cv = Math.cos(view), sv = Math.sin(view);
+    const toS = (x, y) => {
+      const dx = x - d.x, dy = y - d.y;
+      return [w / 2 + (-dx * sv + dy * cv) * k, h / 2 - (dx * cv + dy * sv) * k];
+    };
+    fx.fillStyle = '#3a3f34'; fx.fillRect(0, 0, w, h);
+    fx.strokeStyle = 'rgba(220,230,210,0.09)'; fx.lineWidth = 1;
+    fx.beginPath();
+    const R = 120, g = 12;
+    for (let gx = Math.floor((d.x - R) / g) * g; gx <= d.x + R; gx += g) {
+      const a = toS(gx, d.y - R), b = toS(gx, d.y + R); fx.moveTo(a[0], a[1]); fx.lineTo(b[0], b[1]);
+    }
+    for (let gy = Math.floor((d.y - R) / g) * g; gy <= d.y + R; gy += g) {
+      const a = toS(d.x - R, gy), b = toS(d.x + R, gy); fx.moveTo(a[0], a[1]); fx.lineTo(b[0], b[1]);
+    }
+    fx.stroke();
+    const rect = (t, yaw, off, side, hl, hw) => {
+      const c = Math.cos(yaw), s = Math.sin(yaw);
+      const ox = t.x + c * off - s * side, oy = t.y + s * off + c * side;
+      return [[1, 1], [-1, 1], [-1, -1], [1, -1]].map(([a, b]) => [ox + c * a * hl - s * b * hw, oy + s * a * hl + c * b * hw]);
+    };
+    const poly = (pts, color) => {
+      fx.fillStyle = color; fx.beginPath();
+      pts.forEach((p, i) => { const q = toS(p[0], p[1]); i ? fx.lineTo(q[0], q[1]) : fx.moveTo(q[0], q[1]); });
+      fx.closePath(); fx.fill();
+    };
+    let track = null;
+    for (const t of targets) {
+      const td = Math.hypot(t.x - d.x, t.y - d.y);
+      if (t.dead || td > 70) continue;
+      poly(rect(t, t.dir, -0.8, 0.8, 7.6, 4.6), 'rgba(0,0,0,0.3)');
+      poly(rect(t, t.dir, 0, 2.9, 7, 1.1), '#23261e');
+      poly(rect(t, t.dir, 0, -2.9, 7, 1.1), '#23261e');
+      poly(rect(t, t.dir, 0, 0, 6.6, 2.4), '#4b5337');
+      poly(rect(t, t.dir, -5, 0, 1.2, 1.9), '#3f462e');
+      poly(rect(t, t.turret, 6, 0, 3.5, 0.32), '#606a45');
+      poly(rect(t, t.turret, -0.4, 0, 2.8, 2.3), '#606a45');
+      const [sx, sy] = toS(t.x, t.y);
+      const box = { x: sx, y: sy, bw: 9 * k, bh: 9 * k, td };
+      drawn.set(t, box);
+      if (t === hv) track = box; else contacts.push(box);
+    }
+    for (const o of drones) {
+      if (o === d || o.dead || Math.hypot(o.x - d.x, o.y - d.y) > 70) continue;
+      const [sx, sy] = toS(o.x, o.y), a = 2.2 * k;
+      fx.strokeStyle = '#cfd6dd'; fx.lineWidth = 1.2;
+      fx.beginPath(); fx.moveTo(sx - a, sy - a); fx.lineTo(sx + a, sy + a); fx.moveTo(sx + a, sy - a); fx.lineTo(sx - a, sy + a); fx.stroke();
+      fx.fillStyle = COL.sel;
+      fx.beginPath(); fx.moveTo(sx, sy - a - 3); fx.lineTo(sx - 3.5, sy - a - 8); fx.lineTo(sx + 3.5, sy - a - 8); fx.closePath(); fx.fill();
+    }
+    return track;
+  }
+
+  function drawStatic(w, h, d) {
+    fx.fillStyle = '#0d0e0f'; fx.fillRect(0, 0, w, h);
+    for (let k = 0; k < 900; k++) {
+      const v = (Math.random() * 200) | 0;
+      fx.fillStyle = `rgb(${v},${v},${v})`;
+      fx.fillRect(Math.random() * w, Math.random() * h, 2, 1);
+    }
+    const band = (fpv.clock * 90) % (h + 30) - 15;
+    fx.fillStyle = 'rgba(255,255,255,0.08)'; fx.fillRect(0, band, w, 14);
+    fx.font = '600 13px "IBM Plex Mono", monospace';
+    osdText('SIGNAL LOST', w / 2, h / 2 - 4, 'center', '#ffffff');
+    fx.font = '500 10px "IBM Plex Mono", monospace';
+    if (d && d.result !== undefined) {
+      osdText(d.result ? 'IMPACT · TARGET DESTROYED' : 'IMPACT · TARGET SURVIVED', w / 2, h / 2 + 14, 'center', d.result ? COL.danger : COL.dim);
+    }
+  }
+
+  function drawFpv(dt) {
+    if (fpvEl.hidden) return;
+    const w = fc.clientWidth, h = fc.clientHeight;
+    if (!w || !h) return;
+    if (fc.width !== Math.round(w * DPR) || fc.height !== Math.round(h * DPR)) { fc.width = Math.round(w * DPR); fc.height = Math.round(h * DPR); }
+    fx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    const d = fpv.drone;
+    if (fpv.lost > 0) { drawStatic(w, h, d); return; }
+
+    const speed = Math.hypot(d.vx, d.vy);
+    fpv.scroll += speed * dt;
+    const turn = wrap(d.heading - fpv.prevHeading) / Math.max(dt, 1e-3);
+    fpv.prevHeading = d.heading;
+    fpv.bank += (clamp(turn * 0.22 * Math.min(1, speed / 50), -0.45, 0.45) - fpv.bank) * Math.min(1, dt * 5);
+
+    const foe = d.foe && !d.foe.dead ? d.foe : null;
+    const focal = w * 0.9, camH = 18, base = h * 0.42;
+    const view = fpv.look;
+    let dist = 0, bearing = 0, zd = 0;
+    if (foe) {
+      dist = Math.hypot(foe.x - d.x, foe.y - d.y);
+      bearing = wrap(Math.atan2(foe.y - d.y, foe.x - d.x) - view);
+      zd = Math.max(dist * Math.cos(bearing), 6);
+    }
+    // the camera pitches down during a strike run so the target stays near center
+    const st = d.queue[0] && (d.queue[0].type === 'stalk' || d.queue[0].type === 'hover') && !d.queue[0].target.dead ? d.queue[0].target : null;
+    const stz = st ? Math.max(6, (st.x - d.x) * Math.cos(view) + (st.y - d.y) * Math.sin(view)) : 0;
+    const wantPitch = foe && Math.cos(bearing) > 0.25 ? Math.max(0, base + camH * focal / zd - h * 0.6)
+      : st ? Math.max(-h * 0.3, base + camH * focal / stz - h * 0.5)
+      : speed > 10 ? h * 0.03 : 0;
+    if (fpv.snap) { fpv.pitch = wantPitch; fpv.bank = 0; fpv.snap = false; }
+    else fpv.pitch += (wantPitch - fpv.pitch) * Math.min(1, dt * 4);
+    const horizon = base - fpv.pitch - Math.tan(fpv.tilt) * focal * 0.6;
+
+    const q0 = d.queue[0];
+    const tracked = q0 && (q0.type === 'stalk' || q0.type === 'hover') && !q0.target.dead ? q0.target : null;
+    const hovering = tracked && q0.type === 'hover';
+    const nadir = hovering && Math.hypot(tracked.x - d.x, tracked.y - d.y) < NADIR_R;
+    let lock = null, track = null;
+    const contacts = [], drawn = new Map();
+    if (nadir) {
+      track = drawNadir(d, view, w, h, tracked, contacts, drawn);
+    } else {
+    fx.save();
+    fx.translate(w / 2, h / 2); fx.rotate(-fpv.bank); fx.translate(-w / 2, -h / 2);
+    const sky = fx.createLinearGradient(0, horizon - h, 0, horizon);
+    sky.addColorStop(0, '#2f353b'); sky.addColorStop(1, '#6c757b');
+    fx.fillStyle = sky; fx.fillRect(-w, horizon - 2 * h, 3 * w, 2 * h);
+    // distant ridge line, scrolls as the drone turns
+    fx.fillStyle = '#2b3034';
+    fx.beginPath(); fx.moveTo(-w, horizon);
+    for (let x = -w; x <= 2 * w; x += 6) {
+      const hx = x + view * focal;
+      fx.lineTo(x, horizon - (9 + 6 * Math.sin(hx * 0.012) + 4 * Math.sin(hx * 0.037 + 1.3)));
+    }
+    fx.lineTo(2 * w, horizon); fx.closePath(); fx.fill();
+    fx.fillStyle = '#3a3f34'; fx.fillRect(-w, horizon, 3 * w, 3 * h + Math.max(0, -horizon));
+    fx.strokeStyle = 'rgba(220,230,210,0.09)'; fx.lineWidth = 1;
+    fx.beginPath();
+    const spacing = 12, off = fpv.scroll % spacing;
+    for (let z = spacing - off; z < 420; z += spacing) {
+      const y = horizon + camH * focal / z;
+      if (y > 3 * h) continue;
+      fx.moveTo(-w, y); fx.lineTo(2 * w, y);
+    }
+    for (let xw = -240; xw <= 240; xw += 12) {
+      fx.moveTo(w / 2 + xw * focal / 420, horizon + camH * focal / 420);
+      fx.lineTo(w / 2 + xw * focal / 5, horizon + camH * focal / 5);
+    }
+    fx.stroke();
+
+    // every target inside the camera's field of view and sight range, far to near
+    const seen = [];
+    for (const t of targets) {
+      if (t.dead) continue;
+      const td = Math.hypot(t.x - d.x, t.y - d.y);
+      if (td > SIGHT) continue;
+      const tb = wrap(Math.atan2(t.y - d.y, t.x - d.x) - view);
+      if (Math.cos(tb) < 0.25 || Math.abs(tb) > HALF_FOV + 0.2) continue;
+      const tz = Math.max(td * Math.cos(tb), 6);
+      seen.push({ t, td, sx: w / 2 + Math.tan(tb) * focal, sy: horizon + camH * focal / tz, s: focal / tz });
+    }
+    for (const o of drones) {
+      if (o === d || o.dead) continue;
+      const od = Math.hypot(o.x - d.x, o.y - d.y);
+      if (od > SIGHT || od < 4) continue;
+      const ob = wrap(Math.atan2(o.y - d.y, o.x - d.x) - view);
+      if (Math.cos(ob) < 0.25 || Math.abs(ob) > HALF_FOV + 0.2) continue;
+      seen.push({ friend: o, td: od });
+    }
+    seen.sort((a, b) => b.td - a.td);
+    for (const v of seen) {
+      if (v.friend) { drawFriendly(v.friend, v.td, d, view, w, horizon, focal, camH); continue; }
+      const box = drawTank3D(v.t, d, view, w, horizon, focal, camH);
+      if (!box) continue;
+      box.td = v.td;
+      drawn.set(v.t, box);
+      if (v.t === foe) lock = box; else if (v.t === tracked) track = box; else contacts.push(box);
+    }
+    fx.restore();
+    }
+
+    fx.font = '500 10px "IBM Plex Mono", monospace';
+    const brackets = (b, color, lw, c) => {
+      fx.strokeStyle = color; fx.lineWidth = lw;
+      fx.beginPath();
+      for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+        const px = b.x + sx * b.bw, py = b.y + sy * b.bh;
+        fx.moveTo(px, py - sy * c); fx.lineTo(px, py); fx.lineTo(px - sx * c, py);
+      }
+      fx.stroke();
+    };
+    for (const b of contacts) {
+      brackets(b, 'rgba(250,204,21,0.85)', 1, 4);
+      osdText(`${Math.round(b.td * 0.5)}m`, b.x, b.y + b.bh + 11, 'center', COL.patrol);
+    }
+    if (track) {
+      brackets(track, COL.track, 1.5, 6);
+      osdText(nadir ? 'OVERHEAD' : 'TRACK', track.x, track.y - track.bh - 5, 'center', COL.track);
+      osdText(`${Math.round(track.td * 0.5)}m`, track.x, track.y + track.bh + 12, 'center', COL.track);
+    }
+    if (lock) {
+      brackets(lock, COL.danger, 1.5, 6);
+      if (Math.sin(fpv.clock * 12) > -0.3) osdText('LOCK', lock.x, lock.y - lock.bh - 5, 'center', COL.danger);
+      osdText(`RNG ${Math.round(dist * 0.5)}m`, lock.x, lock.y + lock.bh + 12, 'center', COL.danger);
+    }
+
+    // edge markers for targets in sight range that are outside the frame
+    const stack = { '-1': 0, '1': 0 };
+    for (const t of targets) {
+      if (t.dead) continue;
+      const td = Math.hypot(t.x - d.x, t.y - d.y);
+      if (td > SIGHT) continue;
+      const b = drawn.get(t);
+      if (b && b.x > 0 && b.x < w && b.y > 0 && b.y < h) continue;
+      const tb = wrap(Math.atan2(t.y - d.y, t.x - d.x) - view);
+      let ux, uy, px, py;
+      if (b || nadir) {
+        // drawn but off-frame (e.g. camera tilted away), or top-down view where up is forward
+        if (b) { ux = b.x - w / 2; uy = b.y - h / 2; } else { ux = Math.sin(tb); uy = -Math.cos(tb); }
+        const m = Math.hypot(ux, uy) || 1; ux /= m; uy /= m;
+        const reach = Math.min((w / 2 - 12) / Math.max(Math.abs(ux), 1e-3), (h / 2 - 22) / Math.max(Math.abs(uy), 1e-3));
+        px = w / 2 + ux * reach; py = h / 2 + uy * reach;
+      } else if (Math.cos(tb) > -0.6) {
+        // off to the side: pin to the left/right edge at ground level
+        ux = Math.sin(tb) < 0 ? -1 : 1; uy = 0;
+        px = w / 2 + ux * (w / 2 - 12); py = clamp(horizon + 8, 30, h - 70) + 18 * stack[ux]++;
+      } else {
+        // behind the drone: bottom edge, left or right of center by bearing
+        ux = 0; uy = 1;
+        px = w / 2 + Math.sin(tb) * w * 0.4; py = h - 40;
+      }
+      const color = t === foe ? COL.danger : t === tracked ? COL.track : COL.patrol;
+      fx.fillStyle = color;
+      fx.beginPath();
+      fx.moveTo(px + ux * 6, py + uy * 6);
+      fx.lineTo(px - ux * 4 - uy * 5, py - uy * 4 + ux * 5);
+      fx.lineTo(px - ux * 4 + uy * 5, py - uy * 4 - ux * 5);
+      fx.closePath(); fx.fill();
+      osdText(`${Math.round(td * 0.5)}m${!b && !nadir && uy === 1 ? ' ▾' : ''}`, px - ux * 22, py - uy * 14 + 3, 'center', color);
+    }
+
+    fx.strokeStyle = 'rgba(255,255,255,0.75)'; fx.lineWidth = 1;
+    fx.beginPath();
+    fx.moveTo(w / 2 - 12, h / 2); fx.lineTo(w / 2 - 4, h / 2); fx.moveTo(w / 2 + 4, h / 2); fx.lineTo(w / 2 + 12, h / 2);
+    fx.moveTo(w / 2, h / 2 - 8); fx.lineTo(w / 2, h / 2 - 3); fx.moveTo(w / 2, h / 2 + 3); fx.lineTo(w / 2, h / 2 + 8);
+    fx.stroke();
+
+    const white = 'rgba(240,244,246,0.92)';
+    osdText(`CAM ${String(d.id).padStart(2, '0')}`, 8, 14, 'left', white);
+    if (Math.sin(fpv.clock * 4) > 0) { fx.fillStyle = COL.danger; fx.beginPath(); fx.arc(w - 40, 10.5, 3, 0, 7); fx.fill(); }
+    osdText('REC', w - 8, 14, 'right', white);
+    const hdg = ((view * 180 / Math.PI + 90 + 720) % 360) | 0;
+    const yawDeg = Math.round(wrap(view - d.heading) * 180 / Math.PI);
+    const tiltDeg = Math.round(fpv.tilt * 180 / Math.PI);
+    const gimbal = [yawDeg ? `CAM ${yawDeg < 0 ? '◀' : '▶'} ${Math.abs(yawDeg)}°` : '', tiltDeg ? `TILT ${tiltDeg > 0 ? '▼' : '▲'} ${Math.abs(tiltDeg)}°` : ''].filter(Boolean).join('  ');
+    if (nadir) osdText('NADIR VIEW', w / 2, 14, 'center', COL.track);
+    else if (gimbal) osdText(gimbal, w / 2, 14, 'center', COL.patrol);
+    const alt = foe ? Math.max(1, Math.round(Math.min(40, dist * 0.25))) : 40;
+    osdText(`SPD ${Math.round(speed * 0.6)} km/h  ALT ${alt}m  HDG ${String(hdg).padStart(3, '0')}`, 8, h - 8, 'left', white);
+    osdText(`BAT ${96 - (d.id * 7) % 23}%`, w - 8, h - 8, 'right', white);
+
+    fx.font = '600 11px "IBM Plex Mono", monospace';
+    const n = contacts.length;
+    const trackRange = tracked ? Math.round(Math.hypot(tracked.x - d.x, tracked.y - d.y) * 0.5) : 0;
+    const status = foe ? 'ARMOR LOCKED · STRIKING'
+      : nadir ? 'HOVERING · OVER TARGET'
+      : hovering ? `CLOSING TO HOVER · ${trackRange}m`
+      : tracked ? `STALKING · TARGET AT ${trackRange}m`
+      : n ? `CONTACT · ${n} ARMOR IN VIEW`
+      : d.queue.length ? 'EN ROUTE · NO CONTACTS' : 'ALL CLEAR';
+    osdText(status, w / 2, h - 24, 'center', foe ? COL.danger : tracked ? COL.track : n ? COL.patrol : COL.sel);
+
+    for (let k = 0; k < 120; k++) {
+      fx.fillStyle = `rgba(255,255,255,${Math.random() * 0.12})`;
+      fx.fillRect(Math.random() * w, Math.random() * h, 1, 1);
+    }
+  }
+
+  // ---------- HUD ----------
+  const slotsEl = document.getElementById('slots');
+  const cellsEl = document.getElementById('cells');
+  const countEl = document.getElementById('selcount');
+  const statusEl = document.getElementById('status');
+  const helpEl = document.getElementById('help');
+  const ICON = '<svg viewBox="-10 -10 20 20" aria-hidden="true"><g stroke="currentColor" stroke-width="1.8" fill="none"><path d="M-6-6L6 6M6-6L-6 6"/><circle cx="-6" cy="-6" r="3"/><circle cx="6" cy="-6" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="-6" cy="6" r="3"/></g></svg>';
+
+  for (let i = 1; i <= 10; i++) {
+    const n = i % 10;
+    const b = document.createElement('button');
+    b.className = 'slot';
+    b.dataset.n = n;
+    b.title = `Group ${n}: click to recall, Ctrl/Alt-click to bind the selection`;
+    b.addEventListener('click', e => { groupKey(n, e); b.blur(); });
+    slotsEl.appendChild(b);
+  }
+
+  function renderStatus() {
+    statusEl.className = 'status' + (mode === 'patrol' ? ' patrol' : mode === 'attack' ? ' attack' : mode === 'stalk' || mode === 'hover' ? ' stalk' : '');
+    statusEl.textContent = mode === 'move' ? 'MOVE: click a destination. Hold Shift to queue more.'
+      : mode === 'patrol' ? 'PATROL: click the far end of the route.'
+      : mode === 'attack' ? 'ATTACK: click a target to strike it, or ground to attack-move.'
+      : mode === 'stalk' ? 'STALK: click a target to shadow it.'
+      : mode === 'hover' ? 'HOVER: click a target to park directly above it.'
+      : '';
+  }
+  const tallyEl = document.getElementById('tally');
+  function renderTally() {
+    tallyEl.innerHTML = `Targets <b>${targets.length}</b> · Destroyed ${kills} · Drones spent ${expended}`;
+  }
+  const pkEl = document.getElementById('pk'), pkOut = document.getElementById('pkOut');
+  pkEl.addEventListener('input', () => { PK = pkEl.value / 100; pkOut.textContent = pkEl.value + '%'; });
+  PK = pkEl.value / 100; pkOut.textContent = pkEl.value + '%';
+
+  let cellKey = '';
+  function refreshCells() {
+    const sel = [...selected].filter(d => drones.includes(d));
+    const key = sel.map(d => d.id + (d.hold ? 'h' : '') + d.queue.length).join(',');
+    if (key === cellKey) return;
+    cellKey = key;
+    countEl.textContent = sel.length ? `${sel.length} drone${sel.length > 1 ? 's' : ''}` : 'Nothing selected';
+    cellsEl.innerHTML = '';
+    const shown = sel.slice(0, 40);
+    for (const d of shown) {
+      const b = document.createElement('button');
+      b.className = 'cell' + (d.hold ? ' held' : '');
+      b.title = `Drone ${d.id}${d.hold ? ', holding' : d.queue.length ? `, ${d.queue.length} order${d.queue.length > 1 ? 's' : ''} queued` : ', idle'}. Click to select only this one, Shift-click to drop it.`;
+      b.innerHTML = ICON;
+      b.style.color = d.queue.length ? COL.sel : d.hold ? COL.patrol : COL.dim;
+      b.addEventListener('click', e => {
+        if (e.shiftKey) { selected.delete(d); renderHUD(); }
+        else selectOnly([d]);
+      });
+      cellsEl.appendChild(b);
+    }
+    if (sel.length > shown.length) {
+      const m = document.createElement('span');
+      m.className = 'more'; m.textContent = `+${sel.length - shown.length}`;
+      cellsEl.appendChild(m);
+    }
+  }
+
+  function renderHUD() {
+    for (const b of slotsEl.children) {
+      const n = +b.dataset.n;
+      groups[n] = groups[n].filter(d => drones.includes(d));
+      const g = groups[n];
+      const active = g.length && g.length === selected.size && g.every(d => selected.has(d));
+      b.className = 'slot' + (g.length ? '' : ' empty') + (active ? ' active' : '');
+      b.innerHTML = `<b>${n}</b><span>${g.length || '–'}</span>`;
+    }
+    if (mode && !selected.size) setMode(null);
+    cellKey = '';
+    refreshCells();
+  }
+
+  const btn = (id, fn) => document.getElementById(id).addEventListener('click', e => { fn(e); e.currentTarget.blur(); });
+  btn('bMove', () => setMode('move'));
+  btn('bPatrol', () => setMode('patrol'));
+  btn('bAttack', () => setMode('attack'));
+  btn('bTarget', targetAtCursor);
+  btn('bStop', stop);
+  btn('bStalk', () => setMode('stalk'));
+  btn('bHover', () => setMode('hover'));
+  btn('bHold', hold);
+  btn('bSpawn', () => { for (let i = 0; i < 4; i++) spawn(cam.x + (Math.random() - 0.5) * 60, cam.y + (Math.random() - 0.5) * 60); renderHUD(); });
+  btn('bDelete', removeSelected);
+  btn('helpBtn', () => { helpEl.hidden = !helpEl.hidden; });
+  if (window.innerWidth < 720) helpEl.hidden = true;
+
+  // ---------- starting scene: example squads ----------
+  const alpha = [], bravo = [];
+  for (let i = 0; i < 6; i++) alpha.push(spawn(-180 + (i % 3) * 22, -40 + Math.floor(i / 3) * 22));
+  for (let i = 0; i < 4; i++) bravo.push(spawn(120 + (i % 2) * 22, 60 + Math.floor(i / 2) * 22));
+  groups[1] = alpha; groups[2] = bravo;
+  spawnTarget(-60, -230); spawnTarget(300, -150); spawnTarget(-300, 170); spawnTarget(60, 230);
+  selected = new Set(bravo);
+  issue('patrol', 120, -120, false);
+  pings.length = 0;
+  selected = new Set(alpha);
+  renderHUD();
+  renderStatus();
+  renderTally();
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
