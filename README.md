@@ -2,6 +2,8 @@
 
 A browser prototype of StarCraft 2-style unit control applied to a swarm of kamikaze drones. Open `index.html` in any modern browser. There's no build step and nothing to install.
 
+New here? Start with the [Quickstart](QUICKSTART.md).
+
 ## Controls
 
 | Input | Action |
