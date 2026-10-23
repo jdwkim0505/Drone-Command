@@ -182,6 +182,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       <dt>X / G</dt><dd>Stop / Hold position</dd>
       <dt>D</dt><dd>Spawn a drone at the cursor</dd>
       <dt>T</dt><dd>Place a target at the cursor</dd>
+      <dt>J</dt><dd>Place a jamming zone at the cursor (J inside one removes it)</dd>
       <dt>Del</dt><dd>Remove selected</dd>
     </dl>
     <h2>Groups &amp; camera</h2>
@@ -253,6 +254,8 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   const keys = new Set();
   let lastGroupTap = { n: -1, t: 0 };
   let lastClick = { t: 0, id: 0 };
+  let zones = [];             // jamming zones: inside one, a drone has no link to the operator
+  let jamNote = { text: '', t: 0 };
 
   function resize() {
     DPR = window.devicePixelRatio || 1;
@@ -301,6 +304,36 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     return best;
   }
 
+  // ---------- jamming ----------
+  const zoneAt = (x, y) => zones.find(z => Math.hypot(x - z.x, y - z.y) < z.r);
+  function exitPoint(d, z) {
+    // nearest spot just outside the zone, straight out from its center
+    const dx = d.x - z.x, dy = d.y - z.y, dist = Math.hypot(dx, dy) || 0.01;
+    return { x: z.x + (dx / dist) * (z.r + 14), y: z.y + (dy / dist) * (z.r + 14) };
+  }
+  function linkLost(d, z) {
+    floaters.push({ x: d.x, y: d.y - 14, t: 0, text: 'LINK LOST', color: COL.danger });
+    if (d.foe) { d.blind = true; return; }  // already diving: finishes the strike on its own
+    failsafe(d, z);
+  }
+  function failsafe(d, z) {
+    // no strike in progress: fly back out to where the link returns
+    const p = exitPoint(d, z);
+    d.queue = [{ type: 'move', x: p.x, y: p.y, gid: ++gidSeq, slack: 5, failsafe: true }];
+    d.hold = false; d.blind = false;
+  }
+  function toggleZone() {
+    const p = mouse.inside ? toWorld(mouse.x, mouse.y) : { x: cam.x, y: cam.y };
+    const z = zoneAt(p.x, p.y);
+    if (z) zones = zones.filter(q => q !== z);
+    else { zones.push({ x: p.x, y: p.y, r: 110 }); pings.push({ x: p.x, y: p.y, t: 0, color: COL.danger }); }
+  }
+  function noteJammed(n) {
+    if (!n) return;
+    jamNote = { text: `${n} drone${n > 1 ? 's' : ''} out of contact: order not received`, t: 2.5 };
+    renderStatus();
+  }
+
   // ---------- commands ----------
   function lastPoint(d) {
     const o = d.queue[d.queue.length - 1];
@@ -310,7 +343,8 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   }
 
   function issue(type, wx, wy, queue, target) {
-    const sel = [...selected];
+    const all = [...selected], sel = all.filter(d => !d.jammed);
+    noteJammed(all.length - sel.length);
     if (!sel.length) return;
     const gid = ++gidSeq;
     const base = sel.map(d => queue ? lastPoint(d) : { x: d.x, y: d.y });
@@ -345,8 +379,9 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     pings.push({ x: wx, y: wy, t: 0, color: type === 'patrol' ? COL.patrol : type === 'move' ? COL.sel : type === 'stalk' || type === 'hover' ? COL.track : COL.danger });
   }
 
-  function stop() { for (const d of selected) { d.queue = []; d.hold = false; } renderHUD(); }
-  function hold() { for (const d of selected) { d.queue = []; d.hold = true; d.vx *= 0.3; d.vy *= 0.3; } renderHUD(); }
+  const reachable = () => { const all = [...selected], ok = all.filter(d => !d.jammed); noteJammed(all.length - ok.length); return ok; };
+  function stop() { for (const d of reachable()) { d.queue = []; d.hold = false; } renderHUD(); }
+  function hold() { for (const d of reachable()) { d.queue = []; d.hold = true; d.vx *= 0.3; d.vy *= 0.3; } renderHUD(); }
   function removeSelected() {
     drones = drones.filter(d => !selected.has(d));
     selected.clear();
@@ -371,6 +406,10 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       if (seeks && !d.engage) d.engage = nearestTarget(d, ACQUIRE);
       const foe = o && o.type === 'attack' ? o.target : d.engage;
       d.foe = foe;
+      const z = zoneAt(d.x, d.y);
+      if (z && !d.jammed) { d.jammed = true; linkLost(d, z); o = d.queue[0]; }
+      else if (!z && d.jammed) { d.jammed = false; d.blind = false; }
+      else if (z && !foe && !(o && o.failsafe)) { failsafe(d, z); o = d.queue[0]; }  // blind strike ended without impact
       if (foe) {
         // dive straight in; on contact the drone is spent and rolls against the kill chance
         const ex = foe.x - d.x, ey = foe.y - d.y, ed = Math.hypot(ex, ey) || 0.01;
@@ -441,6 +480,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       for (const d of [...selected]) if (d.dead) selected.delete(d);
       renderHUD();
     }
+    if (jamNote.t > 0) { jamNote.t -= dt; if (jamNote.t <= 0) renderStatus(); }
     for (const f of floaters) { f.t += dt; f.y -= 18 * dt; }
     while (floaters.length && floaters[0].t > 1.2) floaters.shift();
     for (const t of targets) {
@@ -515,6 +555,21 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     ctx.globalAlpha = 1;
   }
 
+  function drawZones() {
+    for (const z of zones) {
+      ctx.fillStyle = 'rgba(248,113,113,0.10)';
+      ctx.beginPath(); ctx.arc(z.x, z.y, z.r, 0, 7); ctx.fill();
+      ctx.strokeStyle = COL.danger; ctx.globalAlpha = 0.7; ctx.lineWidth = 1.4 / cam.z;
+      ctx.setLineDash([7 / cam.z, 5 / cam.z]);
+      ctx.beginPath(); ctx.arc(z.x, z.y, z.r, 0, 7); ctx.stroke();
+      ctx.setLineDash([]); ctx.globalAlpha = 1;
+      ctx.fillStyle = COL.danger;
+      ctx.font = `600 ${10 / cam.z}px "IBM Plex Mono", monospace`;
+      ctx.textAlign = 'center';
+      ctx.fillText('JAMMING', z.x, z.y - z.r + 14 / cam.z);
+    }
+  }
+
   function drawTarget(t) {
     ctx.strokeStyle = COL.danger; ctx.lineWidth = 1.6;
     ctx.beginPath(); ctx.arc(t.x, t.y, 9, 0, 7); ctx.stroke();
@@ -553,7 +608,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     ctx.rotate(-Math.PI / 4);
     ctx.fillStyle = '#3a4046'; ctx.strokeStyle = COL.ink; ctx.lineWidth = 1.2;
     ctx.beginPath(); ctx.rect(-3, -2.5, 6, 5); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = d.hold ? COL.patrol : COL.sel;
+    ctx.fillStyle = d.jammed ? COL.danger : d.hold ? COL.patrol : COL.sel;
     ctx.beginPath(); ctx.arc(3.2, 0, 1.3, 0, 7); ctx.fill();
     ctx.restore();
   }
@@ -563,6 +618,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     ctx.fillStyle = COL.ground; ctx.fillRect(0, 0, W, H);
     ctx.setTransform(DPR * cam.z, 0, 0, DPR * cam.z, DPR * (W / 2 - cam.x * cam.z), DPR * (H / 2 - cam.y * cam.z));
     drawGrid();
+    drawZones();
     drawPaths();
     for (const t of targets) drawTarget(t);
     ctx.font = `600 ${12 / cam.z}px "IBM Plex Mono", monospace`;
@@ -580,7 +636,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     }
     ctx.globalAlpha = 1;
     const cam0 = fpv.drone;
-    if (cam0 && !cam0.dead && fpv.lost <= 0) {
+    if (cam0 && !cam0.dead && !cam0.jammed && fpv.lost <= 0) {
       // camera field of view for the drone whose feed is open
       const a = fpv.look, r = SIGHT;
       const g = ctx.createRadialGradient(cam0.x, cam0.y, 4, cam0.x, cam0.y, r);
@@ -740,6 +796,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       case 'KeyP': setMode('patrol'); break;
       case 'KeyA': setMode('attack'); break;
       case 'KeyT': targetAtCursor(); break;
+      case 'KeyJ': toggleZone(); break;
       case 'Tab': e.preventDefault(); cycleFpv(); break;
       case 'KeyS': setMode('stalk'); break;
       case 'KeyX': stop(); break;
@@ -809,7 +866,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     if (fpvEl.hidden === show) fpvEl.hidden = !show;
     if (!show) return;
     const sel = [...selected], i = sel.indexOf(fpv.drone);
-    const sub = fpv.lost > 0 ? 'signal lost' : sel.length > 1 ? `${i + 1} of ${sel.length} · Tab for next` : 'live';
+    const sub = fpv.lost > 0 || fpv.drone.jammed ? 'link lost' : sel.length > 1 ? `${i + 1} of ${sel.length} · Tab for next` : 'live';
     const label = `Drone ${fpv.drone.id}|${sub}`;
     if (label !== fpv.label) {
       fpv.label = label;
@@ -997,9 +1054,13 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     const band = (fpv.clock * 90) % (h + 30) - 15;
     fx.fillStyle = 'rgba(255,255,255,0.08)'; fx.fillRect(0, band, w, 14);
     fx.font = '600 13px "IBM Plex Mono", monospace';
-    osdText('SIGNAL LOST', w / 2, h / 2 - 4, 'center', '#ffffff');
+    osdText(d && d.jammed ? 'LINK LOST' : 'SIGNAL LOST', w / 2, h / 2 - 4, 'center', '#ffffff');
     fx.font = '500 10px "IBM Plex Mono", monospace';
-    if (d && d.result !== undefined) {
+    if (d && d.jammed) {
+      // the feed cut inside the jamming zone, so the operator never sees how it ends
+      const line = d.dead ? 'NO FEED · RESULT UNKNOWN' : d.blind ? 'JAMMED · STRIKING BLIND' : 'JAMMED · FAILSAFE: RETURNING';
+      osdText(line, w / 2, h / 2 + 14, 'center', d.blind || d.dead ? COL.danger : COL.patrol);
+    } else if (d && d.result !== undefined) {
       osdText(d.result ? 'IMPACT · TARGET DESTROYED' : 'IMPACT · TARGET SURVIVED', w / 2, h / 2 + 14, 'center', d.result ? COL.danger : COL.dim);
     }
   }
@@ -1011,7 +1072,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     if (fc.width !== Math.round(w * DPR) || fc.height !== Math.round(h * DPR)) { fc.width = Math.round(w * DPR); fc.height = Math.round(h * DPR); }
     fx.setTransform(DPR, 0, 0, DPR, 0, 0);
     const d = fpv.drone;
-    if (fpv.lost > 0) { drawStatic(w, h, d); return; }
+    if (fpv.lost > 0 || d.jammed) { drawStatic(w, h, d); return; }
 
     const speed = Math.hypot(d.vx, d.vy);
     fpv.scroll += speed * dt;
@@ -1222,17 +1283,19 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   }
 
   function renderStatus() {
-    statusEl.className = 'status' + (mode === 'patrol' ? ' patrol' : mode === 'attack' ? ' attack' : mode === 'stalk' || mode === 'hover' ? ' stalk' : '');
+    statusEl.className = 'status' + (mode === 'patrol' ? ' patrol' : mode === 'attack' || (!mode && jamNote.t > 0) ? ' attack' : mode === 'stalk' || mode === 'hover' ? ' stalk' : '');
     statusEl.textContent = mode === 'move' ? 'MOVE: click a destination. Hold Shift to queue more.'
       : mode === 'patrol' ? 'PATROL: click the far end of the route.'
       : mode === 'attack' ? 'ATTACK: click a target to strike it, or ground to attack-move.'
       : mode === 'stalk' ? 'STALK: click a target to shadow it.'
       : mode === 'hover' ? 'HOVER: click a target to park directly above it.'
+      : jamNote.t > 0 ? jamNote.text
       : '';
   }
   const tallyEl = document.getElementById('tally');
   function renderTally() {
-    tallyEl.innerHTML = `Targets <b>${targets.length}</b> · Destroyed ${kills} · Drones spent ${expended}`;
+    const dark = drones.filter(d => d.jammed).length;
+    tallyEl.innerHTML = `Targets <b>${targets.length}</b> · Destroyed ${kills} · Drones spent ${expended}` + (dark ? ` · <b>${dark} jammed</b>` : '');
   }
   const pkEl = document.getElementById('pk'), pkOut = document.getElementById('pkOut');
   pkEl.addEventListener('input', () => { PK = pkEl.value / 100; pkOut.textContent = pkEl.value + '%'; });
@@ -1241,7 +1304,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   let cellKey = '';
   function refreshCells() {
     const sel = [...selected].filter(d => drones.includes(d));
-    const key = sel.map(d => d.id + (d.hold ? 'h' : '') + d.queue.length).join(',');
+    const key = sel.map(d => d.id + (d.hold ? 'h' : '') + (d.jammed ? 'j' : '') + d.queue.length).join(',');
     if (key === cellKey) return;
     cellKey = key;
     countEl.textContent = sel.length ? `${sel.length} drone${sel.length > 1 ? 's' : ''}` : 'Nothing selected';
@@ -1250,9 +1313,9 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     for (const d of shown) {
       const b = document.createElement('button');
       b.className = 'cell' + (d.hold ? ' held' : '');
-      b.title = `Drone ${d.id}${d.hold ? ', holding' : d.queue.length ? `, ${d.queue.length} order${d.queue.length > 1 ? 's' : ''} queued` : ', idle'}. Click to select only this one, Shift-click to drop it.`;
+      b.title = `Drone ${d.id}${d.jammed ? ', out of contact (jammed)' : d.hold ? ', holding' : d.queue.length ? `, ${d.queue.length} order${d.queue.length > 1 ? 's' : ''} queued` : ', idle'}. Click to select only this one, Shift-click to drop it.`;
       b.innerHTML = ICON;
-      b.style.color = d.queue.length ? COL.sel : d.hold ? COL.patrol : COL.dim;
+      b.style.color = d.jammed ? COL.danger : d.queue.length ? COL.sel : d.hold ? COL.patrol : COL.dim;
       b.addEventListener('click', e => {
         if (e.shiftKey) { selected.delete(d); renderHUD(); }
         else selectOnly([d]);
@@ -1300,6 +1363,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   for (let i = 0; i < 4; i++) bravo.push(spawn(120 + (i % 2) * 22, 60 + Math.floor(i / 2) * 22));
   groups[1] = alpha; groups[2] = bravo;
   spawnTarget(-60, -230); spawnTarget(300, -150); spawnTarget(-300, 170); spawnTarget(60, 230);
+  zones.push({ x: 300, y: -150, r: 120 });
   selected = new Set(bravo);
   issue('patrol', 120, -120, false);
   pings.length = 0;
