@@ -4,6 +4,13 @@ A browser prototype of StarCraft 2-style unit control applied to a swarm of kami
 
 New here? Start with the [Quickstart](QUICKSTART.md).
 
+## Modes
+
+- **Sandbox:** free play. Spawn drones, place targets and jamming zones, and try anything.
+- **Base Assault:** a timed challenge. Destroy an enemy base's command post (3 hits), radar and fuel depot (2 hits) within 5 minutes. Two air-defense sites shoot down drones inside their dashed range rings, a jammer tower blankets the command post, and armor patrols the base. You start with 8 drones and can launch 16 more from the pad with **D**, 4 at a time. Fewer drones used earns more stars.
+
+The **Menu** button in the top bar switches modes.
+
 ## Controls
 
 | Input | Action |

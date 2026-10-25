@@ -63,6 +63,16 @@ The red circle on the map is a jamming zone. Drones inside it lose their link to
 3. Orders sent to a drone inside the zone never arrive. The top bar tells you how many missed it.
 4. Press **J** to drop a new zone at the cursor, or **J** inside one to remove it.
 
+## 9. Try Base Assault
+
+Click **Menu**, then **Base Assault**.
+
+1. Your 8 drones start on the launch pad in the bottom left. The base is up and to the right, and the mission card shows the three objectives and the clock.
+2. Stay out of the dashed red rings around the two **air defense** sites, or drones start getting shot down. Taking those out first makes everything else cheaper.
+3. The **command post** sits inside the jammer's zone. Strikes still land blind, or you can destroy the **jammer** tower first to clear the zone.
+4. Press **D** to launch 4 more drones from your reserve of 16.
+5. Destroy the command post, radar and fuel depot before the clock runs out. Fewer drones used earns more stars.
+
 ## Cheat sheet
 
 | Key | Does |
