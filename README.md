@@ -4,6 +4,13 @@ A browser prototype of StarCraft 2-style unit control applied to a swarm of kami
 
 New here? Start with the [Quickstart](QUICKSTART.md).
 
+## Modes
+
+- **Sandbox:** free play. Spawn drones, place targets and jamming zones, and try anything.
+- **Base Assault:** a timed challenge. Destroy an enemy base's command post (3 hits), radar and fuel depot (2 hits) within 5 minutes. Two air-defense sites shoot down drones inside their dashed range rings, a jammer tower blankets the command post, and three interceptor drones patrol or hold station. An interceptor chases any drone that enters its dotted detection ring and rams it (80% kill), then returns home if the chase drags it too far. You can strike interceptors too, and head-on works best since they fly straight at you. You start with 8 drones and can launch 16 more from the pad with **D**, 4 at a time. Fewer drones used earns more stars.
+
+The **Menu** button in the top bar switches modes.
+
 ## Controls
 
 | Input | Action |
@@ -18,6 +25,7 @@ New here? Start with the [Quickstart](QUICKSTART.md).
 | P, then click | Patrol |
 | X / G | Stop / Hold position |
 | D / T | Spawn a drone / place a target at the cursor |
+| I | Place an enemy interceptor drone at the cursor |
 | J | Place a jamming zone at the cursor (J inside one removes it) |
 | Del | Remove selected drones |
 | Alt+1–0, Shift+1–0, 1–0 | Bind, add to, recall control groups (tap twice to jump) |
