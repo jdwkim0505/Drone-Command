@@ -224,6 +224,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       <dt>X / G</dt><dd>Stop / Hold position</dd>
       <dt>D</dt><dd>Spawn a drone at the cursor</dd>
       <dt>T</dt><dd>Place a target at the cursor</dd>
+      <dt>I</dt><dd>Place an enemy interceptor drone at the cursor</dd>
       <dt>J</dt><dd>Place a jamming zone at the cursor (J inside one removes it)</dd>
       <dt>D in Base Assault</dt><dd>Launch 4 reserve drones from the launch pad</dd>
       <dt>Del</dt><dd>Remove selected</dd>
@@ -275,7 +276,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       <p>Command a swarm of FPV strike drones. Pick a mode.</p>
       <div class="modes">
         <button class="mode" id="playSandbox"><b>Sandbox</b><span>Free play. Spawn drones, place targets and jamming zones, and try anything.</span></button>
-        <button class="mode" id="playAssault"><b>Base Assault</b><span>Destroy the command post, radar and fuel depot of a defended base in 5 minutes. Air defense shoots drones down and a jammer covers the command post. You have 8 drones in the air and 16 in reserve.</span></button>
+        <button class="mode" id="playAssault"><b>Base Assault</b><span>Destroy the command post, radar and fuel depot of a defended base in 5 minutes. Air defense shoots drones down, interceptor drones hunt yours, and a jammer covers the command post. You have 8 drones in the air and 16 in reserve.</span></button>
       </div>
     </div>
   </div>
@@ -352,11 +353,12 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     fuel: { hp: 2, name: 'Fuel depot', hl: 11, hw: 7, h: 5, color: '#5f5a46', objective: true },
     aa: { hp: 1, name: 'Air defense', hl: 6, hw: 5, h: 3, color: '#4f5a3c', range: 160 },
     jammer: { hp: 1, name: 'Jammer', hl: 3, hw: 3, h: 16, color: '#596067' },
+    interceptor: { hp: 1, name: 'Interceptor', detect: 150, leash: 300 },
   };
   function spawnTarget(x, y, kind = 'tank') {
     const k = KINDS[kind];
     const dir = kind === 'tank' ? Math.random() * 6.3 : -Math.PI / 2;
-    const t = { x, y, home: { x, y }, dir, turret: dir, dead: false, kind, hp: k.hp, cd: 0 };
+    const t = { x, y, home: { x, y }, dir, turret: dir, dead: false, kind, hp: k.hp, cd: 0, vx: 0, vy: 0, ang: Math.random() * 6.3, rotor: 0, patrol: true };
     targets.push(t);
     return t;
   }
@@ -407,6 +409,42 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     if (hit) {
       near.dead = true; near.shotDown = true; dronesLost = true; shotDown++;
       floaters.push({ x: near.x, y: near.y - 14, t: 0, text: 'SHOT DOWN', color: COL.danger });
+    }
+  }
+
+  // ---------- interceptor drones ----------
+  // fast enemy drones that patrol a loop or hold a station, chase any drone that enters their
+  // detection range, and ram it; they give up and fly home if the chase pulls them too far away
+  const INT_SPEED = SPEED * 1.35, INT_PK = 0.8;
+  function interceptor(t, dt) {
+    const k = KINDS.interceptor;
+    t.cd -= dt; t.rotor += dt * 42;
+    if (t.prey && (t.prey.dead || Math.hypot(t.prey.x - t.home.x, t.prey.y - t.home.y) > k.leash)) t.prey = null;
+    if (!t.prey) {
+      let nd = k.detect;
+      for (const d of drones) {
+        if (d.dead || Math.hypot(d.x - t.home.x, d.y - t.home.y) > k.leash) continue;
+        const dd = Math.hypot(d.x - t.x, d.y - t.y);
+        if (dd < nd) { nd = dd; t.prey = d; }
+      }
+    }
+    let gx, gy, sp;
+    if (t.prey) { gx = t.prey.x; gy = t.prey.y; sp = INT_SPEED; }
+    else if (t.patrol) { t.ang += dt * 0.7; gx = t.home.x + Math.cos(t.ang) * 45; gy = t.home.y + Math.sin(t.ang) * 45; sp = SPEED * 0.6; }
+    else { gx = t.home.x; gy = t.home.y; sp = Math.min(SPEED * 0.8, Math.hypot(gx - t.x, gy - t.y) * 2); }
+    const dx = gx - t.x, dy = gy - t.y, dist = Math.hypot(dx, dy) || 0.01;
+    t.vx += ((dx / dist) * sp - t.vx) * 6 * dt;
+    t.vy += ((dy / dist) * sp - t.vy) * 6 * dt;
+    t.x += t.vx * dt; t.y += t.vy * dt;
+    if (Math.hypot(t.vx, t.vy) > 5) t.dir = t.turret = Math.atan2(t.vy, t.vx);
+    if (t.prey && dist < 8 && t.cd <= 0) {
+      t.cd = 1;
+      if (Math.random() < INT_PK) {
+        const d = t.prey;
+        d.dead = true; d.intercepted = true; dronesLost = true; shotDown++;
+        floaters.push({ x: d.x, y: d.y - 14, t: 0, text: 'INTERCEPTED', color: COL.danger });
+        t.prey = null;
+      } else floaters.push({ x: t.x, y: t.y - 14, t: 0, text: 'EVADED', color: COL.dim });
     }
   }
 
@@ -593,6 +631,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     for (const t of targets) {
       if (t.dead) continue;
       if (t.kind === 'aa') airDefense(t, dt);
+      if (t.kind === 'interceptor') { interceptor(t, dt); continue; }
       if (t.kind !== 'tank' && t.kind !== 'aa') continue;
       if (t.kind === 'tank') {
         // slow wander, leashed to where it was placed
@@ -721,7 +760,31 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     ctx.fillText(label, t.x, t.y + (k.hw || 10) + 13);
   }
 
+  function drawInterceptor(t) {
+    ctx.strokeStyle = COL.danger; ctx.globalAlpha = 0.3; ctx.lineWidth = 1 / cam.z;
+    ctx.setLineDash([2 / cam.z, 4 / cam.z]);
+    ctx.beginPath(); ctx.arc(t.x, t.y, KINDS.interceptor.detect, 0, 7); ctx.stroke();
+    ctx.setLineDash([]); ctx.globalAlpha = 1;
+    if (t.prey) {
+      ctx.globalAlpha = 0.6; ctx.beginPath(); ctx.moveTo(t.x, t.y); ctx.lineTo(t.prey.x, t.prey.y); ctx.stroke(); ctx.globalAlpha = 1;
+    }
+    ctx.save(); ctx.translate(t.x, t.y); ctx.rotate(t.dir + Math.PI / 4);
+    ctx.strokeStyle = COL.danger; ctx.lineWidth = 1.8;
+    ctx.beginPath(); ctx.moveTo(-6, -6); ctx.lineTo(6, 6); ctx.moveTo(6, -6); ctx.lineTo(-6, 6); ctx.stroke();
+    ctx.lineWidth = 1;
+    for (const [rx, ry] of [[-6, -6], [6, -6], [6, 6], [-6, 6]]) {
+      ctx.beginPath(); ctx.arc(rx, ry, 3.8, 0, 7); ctx.stroke();
+      const a = t.rotor + rx;
+      ctx.beginPath(); ctx.moveTo(rx + Math.cos(a) * 3.6, ry + Math.sin(a) * 3.6); ctx.lineTo(rx - Math.cos(a) * 3.6, ry - Math.sin(a) * 3.6); ctx.stroke();
+    }
+    ctx.restore();
+    ctx.font = `600 ${9 / Math.min(cam.z, 1.4)}px "IBM Plex Mono", monospace`;
+    ctx.textAlign = 'center'; ctx.fillStyle = COL.danger;
+    ctx.fillText(t.prey ? 'INTERCEPTOR · HUNTING' : 'INTERCEPTOR', t.x, t.y + 22);
+  }
+
   function drawTarget(t) {
+    if (t.kind === 'interceptor') { drawInterceptor(t); return; }
     if (t.kind !== 'tank') { drawStructure(t); return; }
     ctx.strokeStyle = COL.danger; ctx.lineWidth = 1.6;
     ctx.beginPath(); ctx.arc(t.x, t.y, 9, 0, 7); ctx.stroke();
@@ -949,6 +1012,12 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     pings.push({ x: p.x, y: p.y, t: 0, color: COL.ink });
     renderHUD();
   }
+  function interceptorAtCursor() {
+    const p = mouse.inside ? toWorld(mouse.x, mouse.y) : { x: cam.x, y: cam.y };
+    spawnTarget(p.x, p.y, 'interceptor');
+    pings.push({ x: p.x, y: p.y, t: 0, color: COL.danger });
+    renderTally();
+  }
   function targetAtCursor() {
     const p = mouse.inside ? toWorld(mouse.x, mouse.y) : { x: cam.x + (Math.random() - 0.5) * 200, y: cam.y + (Math.random() - 0.5) * 200 };
     spawnTarget(p.x, p.y);
@@ -969,6 +1038,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       case 'KeyP': setMode('patrol'); break;
       case 'KeyA': setMode('attack'); break;
       case 'KeyT': if (gameMode === 'assault') noteMode('Targets are fixed in Base Assault.'); else targetAtCursor(); break;
+      case 'KeyI': if (gameMode === 'assault') noteMode('Targets are fixed in Base Assault.'); else interceptorAtCursor(); break;
       case 'KeyJ': if (gameMode === 'assault') noteMode('Jamming is fixed in Base Assault.'); else toggleZone(); break;
       case 'Tab': e.preventDefault(); cycleFpv(); break;
       case 'KeyS': setMode('stalk'); break;
@@ -1188,6 +1258,29 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     }
   }
 
+  // enemy interceptor seen from a drone camera: a red quadcopter at roughly the same altitude
+  function drawEnemyDrone(t, d, view, w, horizon, focal, camH) {
+    const cv = Math.cos(view), sv = Math.sin(view);
+    const dx = t.x - d.x, dy = t.y - d.y;
+    const f = dx * cv + dy * sv, r = -dx * sv + dy * cv;
+    if (f < 3) return null;
+    const s = focal / f, x = w / 2 + (r / f) * focal, y = horizon + ((camH - (camH + 1.5)) / f) * focal;
+    const arm = Math.max(3, 0.55 * s), rr = arm * 0.62, squash = 0.3;
+    fx.save(); fx.translate(x, y);
+    fx.strokeStyle = '#f2a1a1'; fx.lineWidth = Math.max(1, arm * 0.14);
+    fx.beginPath();
+    fx.moveTo(-arm, -arm * squash); fx.lineTo(arm, arm * squash);
+    fx.moveTo(arm, -arm * squash); fx.lineTo(-arm, arm * squash);
+    fx.stroke();
+    fx.fillStyle = 'rgba(248,113,113,0.22)'; fx.lineWidth = 0.8;
+    for (const [px, py] of [[-arm, -arm], [arm, -arm], [arm, arm], [-arm, arm]]) {
+      fx.beginPath(); fx.ellipse(px, py * squash, rr, rr * squash, 0, 0, 7); fx.fill(); fx.stroke();
+    }
+    fx.fillStyle = '#5a2b2b'; fx.fillRect(-arm * 0.35, -arm * 0.25, arm * 0.7, arm * 0.5);
+    fx.restore();
+    return { x, y, bw: Math.max(10, arm + rr + 3), bh: Math.max(8, arm * squash + rr * squash + 4) };
+  }
+
   // straight-down view used while a drone hovers over its target
   function drawNadir(d, view, w, h, hv, contacts, drawn) {
     const k = h / 70, cv = Math.cos(view), sv = Math.sin(view);
@@ -1220,6 +1313,15 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     for (const t of targets) {
       const td = Math.hypot(t.x - d.x, t.y - d.y);
       if (t.dead || td > 70) continue;
+      if (t.kind === 'interceptor') {
+        const [sx, sy] = toS(t.x, t.y), a = 2.6 * k;
+        fx.strokeStyle = COL.danger; fx.lineWidth = 1.4;
+        fx.beginPath(); fx.moveTo(sx - a, sy - a); fx.lineTo(sx + a, sy + a); fx.moveTo(sx + a, sy - a); fx.lineTo(sx - a, sy + a); fx.stroke();
+        const box = { x: sx, y: sy, bw: a + 6, bh: a + 6, td };
+        drawn.set(t, box);
+        if (t === hv) track = box; else contacts.push(box);
+        continue;
+      }
       if (t.kind !== 'tank') {
         const kk = KINDS[t.kind];
         poly(rect(t, t.dir, -1, 1, kk.hl + 1, kk.hw + 1), 'rgba(0,0,0,0.3)');
@@ -1263,10 +1365,12 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     const band = (fpv.clock * 90) % (h + 30) - 15;
     fx.fillStyle = 'rgba(255,255,255,0.08)'; fx.fillRect(0, band, w, 14);
     fx.font = '600 13px "IBM Plex Mono", monospace';
-    osdText(d && d.jammed && !d.shotDown ? 'LINK LOST' : 'SIGNAL LOST', w / 2, h / 2 - 4, 'center', '#ffffff');
+    osdText(d && d.jammed && !d.shotDown && !d.intercepted ? 'LINK LOST' : 'SIGNAL LOST', w / 2, h / 2 - 4, 'center', '#ffffff');
     fx.font = '500 10px "IBM Plex Mono", monospace';
     if (d && d.shotDown) {
       osdText('SHOT DOWN BY AIR DEFENSE', w / 2, h / 2 + 14, 'center', COL.danger);
+    } else if (d && d.intercepted) {
+      osdText('RAMMED BY INTERCEPTOR', w / 2, h / 2 + 14, 'center', COL.danger);
     } else if (d && d.jammed) {
       // the feed cut inside the jamming zone, so the operator never sees how it ends
       const line = d.dead ? 'NO FEED · RESULT UNKNOWN' : d.blind ? 'JAMMED · STRIKING BLIND' : 'JAMMED · FAILSAFE: RETURNING';
@@ -1370,7 +1474,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     seen.sort((a, b) => b.td - a.td);
     for (const v of seen) {
       if (v.friend) { drawFriendly(v.friend, v.td, d, view, w, horizon, focal, camH); continue; }
-      const box = drawTank3D(v.t, d, view, w, horizon, focal, camH);
+      const box = v.t.kind === 'interceptor' ? drawEnemyDrone(v.t, d, view, w, horizon, focal, camH) : drawTank3D(v.t, d, view, w, horizon, focal, camH);
       if (!box) continue;
       box.td = v.td;
       drawn.set(v.t, box);
@@ -1507,7 +1611,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   const tallyEl = document.getElementById('tally');
   function renderTally() {
     const dark = drones.filter(d => d.jammed).length;
-    tallyEl.innerHTML = `Targets <b>${targets.length}</b> · Destroyed ${kills} · Drones spent ${expended}` + (shotDown ? ` · Shot down ${shotDown}` : '') + (dark ? ` · <b>${dark} jammed</b>` : '');
+    tallyEl.innerHTML = `Targets <b>${targets.length}</b> · Destroyed ${kills} · Drones spent ${expended}` + (shotDown ? ` · Lost to defenses ${shotDown}` : '') + (dark ? ` · <b>${dark} jammed</b>` : '');
     if (gameMode === 'assault') renderMission();
   }
   const pkEl = document.getElementById('pk'), pkOut = document.getElementById('pkOut');
@@ -1624,7 +1728,10 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     const jam = spawnTarget(340, -100, 'jammer');
     jam.zone = { x: 340, y: -100, r: 110 };
     zones.push(jam.zone);
-    spawnTarget(220, -60); spawnTarget(380, -190); spawnTarget(300, 20);
+    // interceptor drones: two fly patrol loops, one holds station by the radar
+    spawnTarget(200, -110, 'interceptor');
+    spawnTarget(300, 10, 'interceptor');
+    spawnTarget(380, -220, 'interceptor').patrol = false;
     const p = mission.pad, squad = [];
     for (let i = 0; i < 8; i++) squad.push(spawn(p.x - 33 + (i % 4) * 22, p.y - 11 + Math.floor(i / 4) * 22));
     groups[1] = squad;
@@ -1675,7 +1782,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       `<dt>Time</dt><dd>${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}</dd>` +
       `<dt>Drones used</dt><dd>${used} of ${mission.startDrones}</dd>` +
       `<dt>Spent on strikes</dt><dd>${expended}</dd>` +
-      `<dt>Shot down</dt><dd>${shotDown}</dd>` +
+      `<dt>Lost to defenses</dt><dd>${shotDown}</dd>` +
       `<dt>Targets destroyed</dt><dd>${kills}</dd>`;
     endEl.hidden = false;
   }
