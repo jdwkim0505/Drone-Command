@@ -116,10 +116,12 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
 .cell { width: 22px; height: 22px; padding: 0; display: grid; place-items: center; font-size: 9px; color: var(--ink-dim); }
 .cell.held { border-color: #7a8188; }
 .cell svg { width: 14px; height: 14px; }
+.cell { position: relative; }
+.cell i { position: absolute; left: 3px; bottom: 2px; height: 2px; border-radius: 1px; }
 .more { font-size: 11px; color: var(--ink-dim); align-self: center; padding-left: 4px; }
 
 .cmds { display: flex; flex-direction: column; }
-.cmdgrid { display: grid; grid-template-columns: repeat(5, minmax(72px, auto)); gap: 4px; }
+.cmdgrid { display: grid; grid-template-columns: repeat(6, minmax(72px, auto)); gap: 4px; }
 .cmdgrid button { text-align: left; }
 #bDelete:hover { border-color: var(--danger); }
 
@@ -222,6 +224,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       <dt>M, then click</dt><dd>Move (Shift to keep queuing)</dd>
       <dt>P, then click</dt><dd>Patrol between here and there</dd>
       <dt>X / G</dt><dd>Stop / Hold position</dd>
+      <dt>B</dt><dd>Return to the launch pad and swap batteries</dd>
       <dt>D</dt><dd>Spawn a drone at the cursor</dd>
       <dt>T</dt><dd>Place a target at the cursor</dd>
       <dt>I</dt><dd>Place an enemy interceptor drone at the cursor</dd>
@@ -267,6 +270,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
         <button id="bSpawn"><kbd>D</kbd>Spawn</button>
         <button id="bTarget"><kbd>T</kbd>Target</button>
         <button id="bDelete"><kbd>Del</kbd>Remove</button>
+        <button id="bReturn"><kbd>B</kbd>Return</button>
       </div>
     </section>
   </footer>
@@ -306,7 +310,9 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   const SPEED = 95, SEP = 17, PICK = 13;
   const ACQUIRE = 95, IMPACT = 9, STALK_R = 110, NADIR_R = 26;
   const ENDLESS = new Set(['patrol', 'stalk', 'hover']);
-  let PK = 0.6, expended = 0, dronesLost = false, shotDown = 0;
+  let PK = 0.6, expended = 0, dronesLost = false, shotDown = 0, ditched = 0;
+  // battery: seconds of flight on a full pack; drones swap packs by landing on the launch pad
+  const BATTERY = 60, SWAP_TIME = 3, PAD_R = 40;
   let gameMode = 'sandbox';
   const mission = { time: 0, reserve: 0, over: false, pad: { x: -560, y: 300 } };
   const floaters = [];
@@ -341,7 +347,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   resize();
 
   function spawn(x, y) {
-    const d = { id: nextId++, x, y, vx: 0, vy: 0, heading: -Math.PI / 2, rotor: Math.random() * 6, queue: [], hold: false };
+    const d = { id: nextId++, x, y, vx: 0, vy: 0, heading: -Math.PI / 2, rotor: Math.random() * 6, queue: [], hold: false, bat: 1, dock: 0 };
     drones.push(d);
     return d;
   }
@@ -466,6 +472,48 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     d.queue = [{ type: 'move', x: p.x, y: p.y, gid: ++gidSeq, slack: 5, failsafe: true }];
     d.hold = false; d.blind = false;
   }
+  // ---------- battery ----------
+  const nearPad = d => Math.hypot(d.x - mission.pad.x, d.y - mission.pad.y) < PAD_R;
+  function rtbOrder(d) {
+    // each drone heads for its own spot on the pad so they don't pile up
+    const i = d.id % 9, p = mission.pad;
+    return { type: 'rtb', x: p.x + (i % 3 - 1) * 20, y: p.y + (Math.floor(i / 3) - 1) * 20, gid: ++gidSeq, slack: 12 };
+  }
+  function battery(d, o, foe, dt) {
+    // returns true once the pack is empty and the drone falls out of the sky
+    if (d.dock > 0) {
+      if (o) { d.dock = 0; return false; }  // a new order cancels the swap
+      d.dock -= dt;
+      if (d.dock <= 0) {
+        d.bat = 1; d.bingo = false;
+        floaters.push({ x: d.x, y: d.y - 14, t: 0, text: 'BATTERY SWAPPED', color: COL.sel });
+      }
+      return false;
+    }
+    if (!o && nearPad(d)) {  // parked on the pad: no drain, and a used pack gets swapped
+      if (d.bat < 0.98) d.dock = SWAP_TIME;
+      return false;
+    }
+    d.bat -= dt * (0.6 + 0.4 * Math.min(1, Math.hypot(d.vx, d.vy) / SPEED)) / BATTERY;
+    if (d.bat <= 0) {
+      d.dead = true; d.depleted = true; dronesLost = true; ditched++;
+      floaters.push({ x: d.x, y: d.y - 14, t: 0, text: 'BATTERY DEAD', color: COL.danger });
+      return true;
+    }
+    // bingo: just enough charge left to fly home, so turn back unless already committed to a strike
+    const home = Math.hypot(d.x - mission.pad.x, d.y - mission.pad.y) / SPEED;
+    if (!d.bingo && !d.jammed && !foe && !(o && o.type === 'rtb') && d.bat * BATTERY < home + 5) {
+      d.bingo = true; d.hold = false;
+      d.queue = [rtbOrder(d)];
+      floaters.push({ x: d.x, y: d.y - 14, t: 0, text: 'BINGO · RETURNING', color: COL.patrol });
+    }
+    return false;
+  }
+  function returnToPad() {
+    for (const d of reachable()) { d.queue = [rtbOrder(d)]; d.hold = false; }
+    renderHUD();
+  }
+
   function toggleZone() {
     const p = mouse.inside ? toWorld(mouse.x, mouse.y) : { x: cam.x, y: cam.y };
     const z = zoneAt(p.x, p.y);
@@ -555,6 +603,8 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       if (z && !d.jammed) { d.jammed = true; linkLost(d, z); o = d.queue[0]; }
       else if (!z && d.jammed) { d.jammed = false; d.blind = false; }
       else if (z && !foe && !(o && o.failsafe)) { failsafe(d, z); o = d.queue[0]; }  // blind strike ended without impact
+      if (battery(d, o, foe, dt)) continue;
+      o = d.queue[0];
       if (foe) {
         // dive straight in; on contact the drone is spent and rolls against the kill chance
         const ex = foe.x - d.x, ey = foe.y - d.y, ed = Math.hypot(ex, ey) || 0.01;
@@ -580,7 +630,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
         let done = false;
         if (o.type === 'patrol') {
           if (dist < 6) o.toB = !o.toB;
-        } else if (dist < 5 || (arrived.has(o.gid) && dist < o.slack)) {
+        } else if (dist < 5 || (o.type === 'rtb' && dist < o.slack) || (arrived.has(o.gid) && dist < o.slack)) {
           arrived.add(o.gid);
           done = true;
         }
@@ -717,12 +767,15 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     ctx.font = `600 ${11 / Math.min(cam.z, 1.4)}px "IBM Plex Mono", monospace`;
     ctx.textAlign = 'left'; ctx.fillStyle = 'rgba(216,221,226,0.45)';
     ctx.fillText('ENEMY BASE', 78, -326);
+  }
+  function drawPad() {
     const p = mission.pad;
+    ctx.font = `600 ${11 / Math.min(cam.z, 1.4)}px "IBM Plex Mono", monospace`;
     ctx.strokeStyle = COL.sel; ctx.globalAlpha = 0.6; ctx.lineWidth = 1.5 / cam.z;
     ctx.strokeRect(p.x - 34, p.y - 34, 68, 68);
     ctx.beginPath(); ctx.arc(p.x, p.y, 16, 0, 7); ctx.stroke();
     ctx.globalAlpha = 1; ctx.fillStyle = COL.sel; ctx.textAlign = 'center';
-    ctx.fillText(`LAUNCH PAD · ${mission.reserve} IN RESERVE`, p.x, p.y + 50);
+    ctx.fillText(gameMode === 'assault' ? `LAUNCH PAD · ${mission.reserve} IN RESERVE` : 'LAUNCH PAD · BATTERY SWAP', p.x, p.y + 50);
   }
 
   function drawZones() {
@@ -802,6 +855,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     ctx.closePath(); ctx.fill();
   }
 
+  const batColor = b => b > 0.5 ? COL.sel : b > 0.25 ? COL.patrol : COL.danger;
   function drawDrone(d) {
     const isSel = selected.has(d);
     if (isSel) {
@@ -826,6 +880,11 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     ctx.fillStyle = d.jammed ? COL.danger : d.hold ? COL.patrol : COL.sel;
     ctx.beginPath(); ctx.arc(3.2, 0, 1.3, 0, 7); ctx.fill();
     ctx.restore();
+    // battery gauge; while swapping it refills to show progress
+    const lvl = d.dock > 0 ? 1 - d.dock / SWAP_TIME : d.bat;
+    ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(d.x - 7, d.y + 11, 14, 2.5);
+    ctx.fillStyle = d.dock > 0 ? COL.track : batColor(d.bat);
+    ctx.fillRect(d.x - 7, d.y + 11, 14 * Math.max(0, lvl), 2.5);
   }
 
   function render() {
@@ -834,6 +893,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     ctx.setTransform(DPR * cam.z, 0, 0, DPR * cam.z, DPR * (W / 2 - cam.x * cam.z), DPR * (H / 2 - cam.y * cam.z));
     drawGrid();
     if (gameMode === 'assault') drawBase();
+    drawPad();
     drawZones();
     drawPaths();
     for (const t of targets) drawTarget(t);
@@ -1045,6 +1105,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       case 'KeyX': stop(); break;
       case 'KeyH': setMode('hover'); break;
       case 'KeyG': hold(); break;
+      case 'KeyB': returnToPad(); break;
       case 'KeyD': if (gameMode === 'assault') launchReserve(); else spawnAtCursor(); break;
       case 'KeyQ': case 'KeyE': case 'KeyZ': case 'KeyC': keys.add(c); break;
       case 'F2': e.preventDefault(); selectOnly(drones); break;
@@ -1365,10 +1426,12 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     const band = (fpv.clock * 90) % (h + 30) - 15;
     fx.fillStyle = 'rgba(255,255,255,0.08)'; fx.fillRect(0, band, w, 14);
     fx.font = '600 13px "IBM Plex Mono", monospace';
-    osdText(d && d.jammed && !d.shotDown && !d.intercepted ? 'LINK LOST' : 'SIGNAL LOST', w / 2, h / 2 - 4, 'center', '#ffffff');
+    osdText(d && d.jammed && !d.shotDown && !d.intercepted && !d.depleted ? 'LINK LOST' : 'SIGNAL LOST', w / 2, h / 2 - 4, 'center', '#ffffff');
     fx.font = '500 10px "IBM Plex Mono", monospace';
     if (d && d.shotDown) {
       osdText('SHOT DOWN BY AIR DEFENSE', w / 2, h / 2 + 14, 'center', COL.danger);
+    } else if (d && d.depleted) {
+      osdText('BATTERY DEPLETED · DRONE DOWN', w / 2, h / 2 + 14, 'center', COL.danger);
     } else if (d && d.intercepted) {
       osdText('RAMMED BY INTERCEPTOR', w / 2, h / 2 + 14, 'center', COL.danger);
     } else if (d && d.jammed) {
@@ -1561,12 +1624,14 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     else if (gimbal) osdText(gimbal, w / 2, 14, 'center', COL.patrol);
     const alt = foe ? Math.max(1, Math.round(Math.min(40, dist * 0.25))) : 40;
     osdText(`SPD ${Math.round(speed * 0.6)} km/h  ALT ${alt}m  HDG ${String(hdg).padStart(3, '0')}`, 8, h - 8, 'left', white);
-    osdText(`BAT ${96 - (d.id * 7) % 23}%`, w - 8, h - 8, 'right', white);
+    osdText(`BAT ${Math.max(0, Math.round(d.bat * 100))}%`, w - 8, h - 8, 'right', d.bat > 0.5 ? white : batColor(d.bat));
 
     fx.font = '600 11px "IBM Plex Mono", monospace';
     const n = contacts.length;
     const trackRange = tracked ? Math.round(Math.hypot(tracked.x - d.x, tracked.y - d.y) * 0.5) : 0;
     const status = foe ? `${KINDS[foe.kind].name.toUpperCase()} LOCKED · STRIKING`
+      : d.dock > 0 ? `SWAPPING BATTERY · ${Math.ceil(d.dock)}s`
+      : d.queue[0] && d.queue[0].type === 'rtb' ? (d.bingo ? 'BINGO · RETURNING TO PAD' : 'RETURNING TO PAD')
       : nadir ? 'HOVERING · OVER TARGET'
       : hovering ? `CLOSING TO HOVER · ${trackRange}m`
       : tracked ? `STALKING · TARGET AT ${trackRange}m`
@@ -1611,7 +1676,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   const tallyEl = document.getElementById('tally');
   function renderTally() {
     const dark = drones.filter(d => d.jammed).length;
-    tallyEl.innerHTML = `Targets <b>${targets.length}</b> · Destroyed ${kills} · Drones spent ${expended}` + (shotDown ? ` · Lost to defenses ${shotDown}` : '') + (dark ? ` · <b>${dark} jammed</b>` : '');
+    tallyEl.innerHTML = `Targets <b>${targets.length}</b> · Destroyed ${kills} · Drones spent ${expended}` + (shotDown ? ` · Lost to defenses ${shotDown}` : '') + (ditched ? ` · Batteries died ${ditched}` : '') + (dark ? ` · <b>${dark} jammed</b>` : '');
     if (gameMode === 'assault') renderMission();
   }
   const pkEl = document.getElementById('pk'), pkOut = document.getElementById('pkOut');
@@ -1621,7 +1686,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   let cellKey = '';
   function refreshCells() {
     const sel = [...selected].filter(d => drones.includes(d));
-    const key = sel.map(d => d.id + (d.hold ? 'h' : '') + (d.jammed ? 'j' : '') + d.queue.length).join(',');
+    const key = sel.map(d => d.id + (d.hold ? 'h' : '') + (d.jammed ? 'j' : '') + (d.dock > 0 ? 's' : '') + d.queue.length + 'b' + Math.ceil(d.bat * 10)).join(',');
     if (key === cellKey) return;
     cellKey = key;
     countEl.textContent = sel.length ? `${sel.length} drone${sel.length > 1 ? 's' : ''}` : 'Nothing selected';
@@ -1630,8 +1695,8 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     for (const d of shown) {
       const b = document.createElement('button');
       b.className = 'cell' + (d.hold ? ' held' : '');
-      b.title = `Drone ${d.id}${d.jammed ? ', out of contact (jammed)' : d.hold ? ', holding' : d.queue.length ? `, ${d.queue.length} order${d.queue.length > 1 ? 's' : ''} queued` : ', idle'}. Click to select only this one, Shift-click to drop it.`;
-      b.innerHTML = ICON;
+      b.title = `Drone ${d.id}, battery ${Math.max(0, Math.round(d.bat * 100))}%${d.jammed ? ', out of contact (jammed)' : d.hold ? ', holding' : d.queue.length ? `, ${d.queue.length} order${d.queue.length > 1 ? 's' : ''} queued` : ', idle'}. Click to select only this one, Shift-click to drop it.`;
+      b.innerHTML = ICON + `<i style="width:${Math.max(0, d.bat) * 16}px;background:${d.dock > 0 ? COL.track : batColor(d.bat)}"></i>`;
       b.style.color = d.jammed ? COL.danger : d.queue.length ? COL.sel : d.hold ? COL.patrol : COL.dim;
       b.addEventListener('click', e => {
         if (e.shiftKey) { selected.delete(d); renderHUD(); }
@@ -1675,6 +1740,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     renderHUD();
   });
   btn('bDelete', removeSelected);
+  btn('bReturn', returnToPad);
   btn('helpBtn', () => { helpEl.hidden = !helpEl.hidden; });
   if (window.innerWidth < 720) helpEl.hidden = true;
 
@@ -1689,7 +1755,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     drones = []; targets = []; zones = []; selected = new Set();
     for (let i = 0; i < 10; i++) groups[i] = [];
     floaters.length = 0; pings.length = 0; shots.length = 0; arrived.clear();
-    kills = 0; expended = 0; shotDown = 0; nextId = 1;
+    kills = 0; expended = 0; shotDown = 0; ditched = 0; nextId = 1;
     mode = null; cvs.classList.remove('targeting');
     jamNote = { text: '', t: 0 };
     watch(null);
@@ -1701,6 +1767,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     missionEl.hidden = true;
     spawnBtn.innerHTML = '<kbd>D</kbd>Spawn';
     cam.x = 0; cam.y = 0; cam.z = 1;
+    mission.pad = { x: -420, y: -30 };
     const alpha = [], bravo = [];
     for (let i = 0; i < 6; i++) alpha.push(spawn(-180 + (i % 3) * 22, -40 + Math.floor(i / 3) * 22));
     for (let i = 0; i < 4; i++) bravo.push(spawn(120 + (i % 2) * 22, 60 + Math.floor(i / 2) * 22));
@@ -1718,7 +1785,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     resetWorld();
     gameMode = 'assault';
     spawnBtn.innerHTML = '<kbd>D</kbd>Launch';
-    Object.assign(mission, { time: MISSION_TIME, reserve: 16, over: false, startDrones: 24 });
+    Object.assign(mission, { time: MISSION_TIME, reserve: 16, over: false, startDrones: 24, pad: { x: -560, y: 300 } });
     // the base: three objectives, two air-defense sites, a jammer over the command post, and armor on patrol
     spawnTarget(290, -140, 'cp');
     spawnTarget(420, -280, 'radar');
@@ -1783,6 +1850,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       `<dt>Drones used</dt><dd>${used} of ${mission.startDrones}</dd>` +
       `<dt>Spent on strikes</dt><dd>${expended}</dd>` +
       `<dt>Lost to defenses</dt><dd>${shotDown}</dd>` +
+      `<dt>Batteries died</dt><dd>${ditched}</dd>` +
       `<dt>Targets destroyed</dt><dd>${kills}</dd>`;
     endEl.hidden = false;
   }

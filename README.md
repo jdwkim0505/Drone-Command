@@ -24,6 +24,7 @@ The **Menu** button in the top bar switches modes.
 | H, then click a target | Hover directly overhead, top-down camera |
 | P, then click | Patrol |
 | X / G | Stop / Hold position |
+| B | Return to the launch pad and swap batteries |
 | D / T | Spawn a drone / place a target at the cursor |
 | I | Place an enemy interceptor drone at the cursor |
 | J | Place a jamming zone at the cursor (J inside one removes it) |
@@ -38,4 +39,5 @@ The **Menu** button in the top bar switches modes.
 - **Kamikaze strikes:** each drone is used up on impact and kills with the probability set by the Kill chance slider (60% by default). Drones that are left over stay in the group.
 - **FPV feed:** a simulated camera for the selected drone. It has a stabilized gimbal, shows targets as 3D tanks seen from the drone's actual angle, shows friendly drones with IFF markers, puts edge arrows on targets that are out of frame, and switches to a top-down view while hovering.
 - **Jamming zones:** red circles on the map cut the link between operator and drone. A drone that enters one shows LINK LOST on its feed and stops taking orders. If it was already diving on a target, it finishes the strike blind and the feed never shows the result. Otherwise its failsafe flies it back out to the edge, where the link comes back.
+- **Battery:** each drone has about 60 seconds of flight on a full pack, shown as a bar under it, in the selection panel and on its feed. When a drone has just enough charge to make it home, it calls **BINGO** and flies back to the launch pad on its own unless it's already diving on a target. You can override that, but a drone that runs dry falls out of the sky. A drone parked on the pad stops draining and gets a fresh pack in 3 seconds. Press **B** to send the selection home early.
 - **Group movement:** clicking outside the group keeps its formation, clicking inside pulls the drones together, and drones push apart so they don't stack.
