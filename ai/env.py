@@ -9,23 +9,9 @@ import gymnasium as gym
 import numpy as np
 
 from plans import FIELDS, SLOTS, decode
-from sim import BUDGET, KINDS, OBJECTIVES, build_city, plan_cost, simulate
+from sim import BUDGET, KINDS, build_city, plan_cost, simulate
 
-TOTAL_OBJECTIVE_HP = sum(KINDS[k]["hp"] for k in OBJECTIVES)
-
-
-def reward(result):
-    """What the AI is trying to maximize. This is the main thing to experiment with.
-
-    Right now: big points per objective destroyed, a little for any damage on objectives
-    (so it gets credit for progress before it can destroy things), a bonus for killing the
-    radar, and a small penalty for spending budget.
-    """
-    damage = TOTAL_OBJECTIVE_HP - result["objective_hp_left"]
-    return (10 * result["objectives_destroyed"]
-            + 2 * damage
-            + 3 * result["radar_destroyed"]
-            - 0.001 * result["cost_pts"])
+from doctrines import DOCTRINES, general as reward   # noqa: F401  (reward kept for old scripts)
 
 
 def observe():
@@ -43,8 +29,9 @@ def observe():
 
 
 class BarrageEnv(gym.Env):
-    def __init__(self, seed=None):
+    def __init__(self, seed=None, doctrine="general"):
         super().__init__()
+        self.reward_fn = DOCTRINES[doctrine][0]
         self.action_space = gym.spaces.MultiDiscrete(FIELDS * SLOTS)
         obs = observe()
         self.observation_space = gym.spaces.Box(-2, 2, shape=obs.shape, dtype=np.float32)
@@ -63,4 +50,4 @@ class BarrageEnv(gym.Env):
         result = simulate(plan, seed=self._rng.randrange(1 << 30))
         self.last = result
         info = dict(result, over_budget=max(0, plan_cost(plan) - BUDGET))
-        return self._obs, float(reward(result)), True, False, info
+        return self._obs, float(self.reward_fn(result)), True, False, info

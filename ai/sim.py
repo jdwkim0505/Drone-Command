@@ -60,7 +60,7 @@ SAM_USD, SHIP_SAM_USD, INTERCEPTOR_USD = 3e6, 1.2e6, 20e3
 
 PAD = (-880.0, -40.0)     # air launch site
 DOCK = (-860.0, 380.0)    # sea launch site
-JAM = (120.0, -40.0, 140.0)  # GPS jamming zone: x, y, radius
+JAM = (520.0, -110.0, 150.0)  # GPS jamming zone over the city core: x, y, radius
 COAST = (170.0, 1.1)
 
 
@@ -109,7 +109,19 @@ class Munition:
 
 
 def build_city(rng):
-    """The defended city from setupBarrage() in index.html."""
+    """The defended city from setupBarrage() in index.html.
+
+    Laid out like a layered air defense instead of scattered pieces:
+      - two SAM sites close enough to cover each other (mutual support), together covering
+        every inland objective, with the radar tucked between them where both protect it
+      - short-range gun teams sit on the high-value assets and on the SAM sites themselves,
+        since the long-range sites are the first thing an attacker tries to blind
+      - interceptor drones forward on the two likely approach axes: due west from the
+        launch site, and the northern arc over the command post
+      - the frigate holds the seaward approach to the port; the patrol boat pickets further
+        out along the sea lane as an early tripwire
+      - GPS jamming over the city core, so GPS-guided drones lose accuracy on the way in
+    """
     t = []
     add = lambda kind, x, y: t.append(Target(kind, x, y, rng)) or t[-1]
     add("plant", 620, -120)
@@ -117,17 +129,18 @@ def build_city(rng):
     add("fuel", 720, 30)
     add("port", 500, coast_y(500) - 10)
     add("cp", 560, -330)
-    add("radar", 430, -200)
-    add("sam", 300, -60).ammo = 8
-    add("sam", 640, -250).ammo = 8
-    for x, y in [(160, -130), (230, 70), (520, 20), (450, -330)]:
+    add("radar", 520, -180)
+    add("sam", 430, -100).ammo = 8
+    add("sam", 630, -200).ammo = 8
+    # gun teams: on each SAM site, the command post, and between the plant and fuel depot
+    for x, y in [(450, -80), (650, -180), (540, -305), (680, -40)]:
         add("gun", x, y)
-    add("interceptor", 260, -220)
-    add("interceptor", 560, -40)
-    fr = add("frigate", 480, 400)
-    fr.ammo, fr.wp, fr.dir = 6, (640, 380), 0.0
-    b = add("boat", 200, 320)
-    b.wp = (40, 300)
+    add("interceptor", 230, -60)      # western axis screen
+    add("interceptor", 470, -420)     # northern axis screen
+    fr = add("frigate", 380, 320)
+    fr.ammo, fr.wp, fr.dir = 6, (580, 320), 0.0
+    b = add("boat", 60, 330)
+    b.wp = (-160, 330)
     return t
 
 
@@ -144,7 +157,7 @@ def simulate(plan, seed=0, budget=BUDGET):
             left -= n * c
     targets = build_city(rng)
     munitions, missiles = [], []
-    stats = dict(intercepted=0, impacts=0, sam_shots=0, enemy_spend=0.0, lost_to={})
+    stats = dict(intercepted=0, impacts=0, sam_shots=0, enemy_spend=0.0, lost_to={}, kill_times={})
     clock = 0.0
 
     def down(m, by):
@@ -184,6 +197,8 @@ def simulate(plan, seed=0, budget=BUDGET):
         m.salvo["hits"] += 1
         if best.hp <= 0:
             best.dead = True
+            if best.kind in OBJECTIVES or best.kind == "radar":
+                stats["kill_times"][best.kind] = round(clock, 1)
 
     def nearest(t, pool, r):
         best, bd = None, r
@@ -346,6 +361,7 @@ def simulate(plan, seed=0, budget=BUDGET):
         enemy_spend=stats["enemy_spend"],
         sam_shots=stats["sam_shots"],
         time=round(clock, 1),
+        kill_times=stats["kill_times"],     # when each objective (and the radar) was destroyed
     )
 
 
