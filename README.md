@@ -10,6 +10,12 @@ New here? Start with the [Quickstart](QUICKSTART.md).
 - **Base Assault:** a timed challenge. Destroy an enemy base's command post (3 hits), radar and fuel depot (2 hits) within 5 minutes. Two air-defense sites shoot down drones inside their dashed range rings, a jammer tower blankets the command post, and three interceptor drones patrol or hold station. An interceptor chases any drone that enters its dotted detection ring and rams it (80% kill), then returns home if the chase drags it too far. You can strike interceptors too, and head-on works best since they fly straight at you. You start with 8 drones and can launch 16 more from the pad with **D**, 4 at a time. Fewer drones used earns more stars.
 
 - **Coastal Strike:** air and sea together. Sink a frigate (4 HP) and destroy a coastal missile battery (2 hits) and a radar within 6 minutes. The frigate carries air defense and guns, two patrol boats screen it, and air defense plus an interceptor cover the shore. You start with 6 air drones and 3 sea drones. **D** launches 4 more air drones (10 in reserve) and **N** launches 2 more sea drones (4 in reserve).
+- **Barrage:** a plan-then-launch siege mode with no micro. You get an 80-point budget to route salvos of one-way attack munitions into a defended coastal city with five objectives. Once launched, they fly their program.
+  - **Munitions:** Shahed-style drones (2 pts, slow, 1 damage), decoys (1 pt, no warhead), cruise missiles (8 pts, fast and low, 3 damage) and sea drones (5 pts, water only, 3 damage).
+  - **Defenses:** two SAM sites with 8 missiles each, a radar that cues them (without it they see less, especially low cruise missiles), gun teams, interceptor drones, GPS jamming that makes Shaheds and decoys drift off course, a patrol boat, and a frigate with its own missiles and gun.
+  - **Planning:** press 1–4 (or click a munition), click waypoints from the launch site, then right-click the target. In the panel you can set each salvo's size and launch time, then press **Space** to launch.
+  - **In flight:** you can only watch at 1×, 2× or 4× speed, except that each Shahed salvo can be redirected once over its satellite link.
+  - **Results:** the end card shows what got through, what shot your munitions down, and the cost exchange (your munitions against the enemy's interceptor spend). **Retry** keeps your plan so you can refine it.
 
 The **Menu** button in the top bar switches modes.
 

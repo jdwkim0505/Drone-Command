@@ -102,6 +102,17 @@ Click **Menu**, then **Coastal Strike**. This one mixes air and sea.
 5. Watch out for the two **patrol boats**. They shoot at drones that come close.
 6. **D** launches 4 more air drones, and **N** launches 2 more sea drones.
 
+## 13. Try Barrage
+
+Click **Menu**, then **Barrage**. No micro here: you plan the whole strike, launch it, and watch.
+
+1. Press **1** for Shaheds, **2** for decoys, **3** for cruise missiles or **4** for sea drones.
+2. Click waypoints from the launch site to route around defenses, then right-click the target. Backspace removes the last waypoint, and Esc cancels.
+3. In the panel, set each salvo's size and launch time (T+0s, T+5s, …) within the 80-point budget.
+4. Some ideas: send decoys first so the SAMs waste missiles on them. Cruise missiles on the radar blind the SAMs. Route Shaheds around the GPS jamming zone so they don't drift off course. Sea drones go for the port.
+5. Press **Space** to launch, and use 1×, 2× or 4× to speed up time. Each Shahed salvo has one **Redirect** over satellite if a target is already destroyed.
+6. The end card shows what killed your munitions and the cost exchange. **Retry** keeps your plan so you can tweak it.
+
 ## Cheat sheet
 
 | Key | Does |
