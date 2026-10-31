@@ -25,7 +25,7 @@ def reward(result):
     return (10 * result["objectives_destroyed"]
             + 2 * damage
             + 3 * result["radar_destroyed"]
-            - 0.05 * result["cost_pts"])
+            - 0.001 * result["cost_pts"])
 
 
 def observe():
@@ -38,7 +38,7 @@ def observe():
     feats = []
     for t in build_city(random.Random(0)):
         feats += [kinds.index(t.kind) / len(kinds), t.x / 1000, t.y / 1000, t.hp / 4, (t.ammo or 0) / 8]
-    feats.append(BUDGET / 100)
+    feats.append(BUDGET / 4000)
     return np.array(feats, dtype=np.float32)
 
 

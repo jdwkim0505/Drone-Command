@@ -2173,17 +2173,21 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   // a plan-then-launch strike: route salvos of one-way attack munitions before launch, then watch
   // them fly their programs into a layered air defense. Once airborne they can't be steered, except
   // that each Shahed salvo can be sent one new target over its satellite link.
+  // Reference values (public, approximate) scaled to the map: speed is 0.3 px/s per km/h, cost is in $ thousands.
+  // Shahed-136 class ~$35k, ~185 km/h, ~50 kg warhead, 5-round racks · foam decoy ~$10k, ~160 km/h ·
+  // subsonic cruise missile ~$1.5M, ~850 km/h, ~450 kg warhead, fired in fours · sea drone ~$250k, ~42 knots, ~300 kg.
+  // Keep in step with ai/sim.py.
   const MUNITIONS = {
-    shahed: { name: 'Shahed', cost: 2, usd: 50e3, speed: 55, damage: 1, blast: 12, count: 6, gap: 0.7, color: '#fb923c', slow: true, drift: 1, note: 'Slow, cheap, 1 damage' },
-    decoy: { name: 'Decoy', cost: 1, usd: 10e3, speed: 60, damage: 0, blast: 0, count: 6, gap: 0.5, color: '#fde68a', slow: true, drift: 1, note: 'No warhead, draws fire' },
-    cruise: { name: 'Cruise missile', cost: 8, usd: 1.5e6, speed: 210, damage: 3, blast: 16, count: 2, gap: 1.2, color: '#f472b6', low: true, drift: 0.15, note: 'Fast, low, 3 damage' },
-    usv: { name: 'Sea drone', cost: 5, usd: 250e3, speed: 62, damage: 3, blast: 18, count: 2, gap: 1, color: '#7dd3fc', sea: true, drift: 0, note: 'Water only, 3 damage' },
+    shahed: { name: 'Shahed', cost: 35, usd: 35e3, speed: 55, damage: 1, blast: 12, count: 10, step: 5, gap: 0.7, color: '#fb923c', slow: true, drift: 1, note: '185 km/h, 50 kg warhead' },
+    decoy: { name: 'Decoy', cost: 10, usd: 10e3, speed: 48, damage: 0, blast: 0, count: 10, step: 5, gap: 0.5, color: '#fde68a', slow: true, drift: 1, note: '160 km/h, no warhead, draws fire' },
+    cruise: { name: 'Cruise missile', cost: 1500, usd: 1.5e6, speed: 255, damage: 3, blast: 20, count: 1, gap: 1.2, color: '#f472b6', low: true, drift: 0.15, note: '850 km/h, low, 450 kg warhead' },
+    usv: { name: 'Sea drone', cost: 250, usd: 250e3, speed: 23, damage: 3, blast: 20, count: 3, gap: 1, color: '#7dd3fc', sea: true, drift: 0, note: '42 knots, water only, 300 kg' },
   };
   // the best plan found by the neural network in ai/ (regenerate with: python ai/export_plan.py --js)
-  const AI_PLAN = [{"type":"cruise","count":1,"delay":5,"route":[[-300,250],[540,250],[620,-120]]},{"type":"cruise","count":1,"delay":10,"route":[[-100,-430],[560,-460],[560,-330]]},{"type":"cruise","count":1,"delay":5,"route":[[-300,250],[640,250],[720,30]]},{"type":"cruise","count":1,"delay":5,"route":[[-300,250],[420,250],[500,164]]},{"type":"cruise","count":1,"delay":0,"route":[[-300,250],[280,250],[360,40]]}];
+  const AI_PLAN = [{"type":"shahed","count":8,"delay":0,"route":[[-100,-430],[560,-460],[560,-330]]},{"type":"shahed","count":12,"delay":10,"route":[[-300,250],[280,250],[360,40]]},{"type":"shahed","count":8,"delay":15,"route":[[-100,-430],[720,-460],[720,30]]},{"type":"shahed","count":8,"delay":10,"route":[[-300,250],[420,250],[500,164]]},{"type":"shahed","count":8,"delay":15,"route":[[-100,-430],[620,-460],[620,-120]]}];
   const TOOL_KEYS = { Digit1: 'shahed', Digit2: 'decoy', Digit3: 'cruise', Digit4: 'usv' };
   const SAM_USD = 3e6, SHIP_SAM_USD = 1.2e6, INTERCEPTOR_USD = 20e3, GUN_PK = 0.06;
-  const barrage = { phase: 'plan', budget: 80, by: {}, salvos: [], tool: null, draft: [], clock: 0, munitions: [], missiles: [], speed: 1, redirect: null,
+  const barrage = { phase: 'plan', budget: 2000, by: {}, salvos: [], tool: null, draft: [], clock: 0, munitions: [], missiles: [], speed: 1, redirect: null,
     enemySpend: 0, samShots: 0, intercepted: 0, impacts: 0, endTimer: 0 };
   const barrageEl = document.getElementById('barrage'), hudEl = document.querySelector('footer.hud');
   const spent = () => barrage.salvos.reduce((v, s) => v + s.count * MUNITIONS[s.type].cost, 0);
@@ -2482,12 +2486,12 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   function renderBarrage() {
     if (gameMode !== 'barrage') return;
     const used = spent(), plan = barrage.phase === 'plan';
-    let html = `<h2>${plan ? 'Plan the barrage' : 'Barrage in flight'} <span>${plan ? `${used} / ${barrage.budget} pts` : `T+${Math.floor(barrage.clock)}s`}</span></h2>`;
+    let html = `<h2>${plan ? 'Plan the barrage' : 'Barrage in flight'} <span>${plan ? `${usd(used * 1e3)} / ${usd(barrage.budget * 1e3)}` : `T+${Math.floor(barrage.clock)}s`}</span></h2>`;
     if (plan) {
       html += `<div class="budget"><i style="width:${Math.min(100, used / barrage.budget * 100)}%"></i></div>`;
       html += `<p>Pick a munition, click waypoints from the launch site, then right-click the target. Once launched, salvos fly their route on their own.</p><div class="tools">`;
       Object.entries(MUNITIONS).forEach(([type, M], i) => {
-        html += `<button data-tool="${type}" class="${barrage.tool === type ? 'on' : ''}"><kbd>${i + 1}</kbd> <span style="color:${M.color}">${M.name}</span><small>${M.cost} pts · ${M.note}</small></button>`;
+        html += `<button data-tool="${type}" class="${barrage.tool === type ? 'on' : ''}"><kbd>${i + 1}</kbd> <span style="color:${M.color}">${M.name}</span><small>${usd(M.usd)} · ${M.note}</small></button>`;
       });
       html += '</div>';
     } else {
@@ -2522,8 +2526,8 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     if (!s) return;
     const M = MUNITIONS[s.type];
     switch (b.dataset.act) {
-      case 'cnt+': if (spent() + M.cost <= barrage.budget) s.count++; else noteMode('Not enough budget left.'); break;
-      case 'cnt-': s.count = Math.max(1, s.count - 1); break;
+      case 'cnt+': { const n = Math.min(M.step || 1, Math.floor((barrage.budget - spent()) / M.cost)); if (n > 0) s.count += n; else noteMode('Not enough budget left.'); break; }
+      case 'cnt-': s.count = Math.max(1, s.count - (M.step || 1)); break;
       case 'del+': s.delay = Math.min(60, s.delay + 5); break;
       case 'del-': s.delay = Math.max(0, s.delay - 5); break;
       case 'rm': barrage.salvos.splice(+b.dataset.i, 1); break;
@@ -2575,6 +2579,13 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       route: s.route.map(([x, y]) => MUNITIONS[s.type].sea ? toWater(+x, +y) : { x: +x, y: +y }),
       fired: 0, hits: 0, lost: 0, redirected: false,
     }));
+    // trim to the budget in order, the same way ai/sim.py does
+    let left = barrage.budget;
+    barrage.salvos = barrage.salvos.filter(s => {
+      s.count = Math.min(s.count, Math.floor(left / MUNITIONS[s.type].cost));
+      left -= s.count * MUNITIONS[s.type].cost;
+      return s.count > 0;
+    });
     barrage.tool = null; barrage.draft = [];
     renderBarrage();
   }

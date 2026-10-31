@@ -6,13 +6,13 @@ A plan has up to SLOTS salvos. Each salvo is 5 small integers:
      type    0 = empty slot, 1 = shahed, 2 = decoy, 3 = cruise, 4 = usv
      target  which point on the map to strike (see AIM_POINTS)
      route   which of 4 corridors to fly (see route())
-     count   0..7  ->  1..8 munitions
+     count   0..7  ->  1..8 units (a unit is 4 Shaheds or decoys, or 1 missile or sea drone)
      delay   0..3  ->  launch at T+0, 5, 10 or 15 seconds
 
 So a whole plan is SLOTS * 5 integers: exactly the shape of a MultiDiscrete action in Gymnasium.
 """
 import random
-from sim import build_city, coast_y, TYPES
+from sim import build_city, coast_y, MUNITIONS, TYPES
 
 SLOTS = 5
 FIELDS = [5, 8, 4, 8, 4]          # number of choices for each of the 5 numbers in a salvo
@@ -56,7 +56,7 @@ def decode(action):
             continue
         mtype = TYPES[typ - 1]
         tx, ty = AIM_POINTS[tgt]
-        plan.append(dict(type=mtype, count=cnt + 1, delay=dly * 5, route=route(mtype, rte, tx, ty),
+        plan.append(dict(type=mtype, count=(cnt + 1) * MUNITIONS[mtype]["unit"], delay=dly * 5, route=route(mtype, rte, tx, ty),
                          target=AIM_ORDER[tgt], corridor=rte))
     return plan
 
