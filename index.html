@@ -817,12 +817,18 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
 
   function drawShip(t) {
     const k = KINDS[t.kind];
+    ctx.strokeStyle = COL.danger; ctx.lineWidth = 1 / cam.z;
     if (k.range) {
-      ctx.strokeStyle = COL.danger; ctx.globalAlpha = 0.35; ctx.lineWidth = 1 / cam.z;
-      ctx.setLineDash([3 / cam.z, 5 / cam.z]);
+      // air defense: same dashed ring as the land sites
+      ctx.globalAlpha = 0.35; ctx.setLineDash([3 / cam.z, 5 / cam.z]);
       ctx.beginPath(); ctx.arc(t.x, t.y, k.range, 0, 7); ctx.stroke();
-      ctx.setLineDash([]); ctx.globalAlpha = 1;
     }
+    // deck gun: a faint shaded disc so it reads apart from the air defense ring
+    ctx.globalAlpha = 0.06; ctx.fillStyle = COL.danger;
+    ctx.beginPath(); ctx.arc(t.x, t.y, k.gun, 0, 7); ctx.fill();
+    ctx.globalAlpha = 0.45; ctx.setLineDash([1.5 / cam.z, 3 / cam.z]);
+    ctx.beginPath(); ctx.arc(t.x, t.y, k.gun, 0, 7); ctx.stroke();
+    ctx.setLineDash([]); ctx.globalAlpha = 1;
     ctx.save(); ctx.translate(t.x, t.y); ctx.rotate(t.dir);
     ctx.fillStyle = 'rgba(248,113,113,0.16)'; ctx.strokeStyle = COL.danger; ctx.lineWidth = 1.6;
     ctx.beginPath();
