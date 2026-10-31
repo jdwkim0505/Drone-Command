@@ -166,7 +166,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
 .card h1.win { color: var(--sel); }
 .card h1.lose { color: var(--danger); }
 .card > p { color: var(--ink-dim); margin: 0 0 18px; line-height: 1.5; }
-.modes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .mode { text-align: left; padding: 14px; display: grid; gap: 6px; align-content: start; }
 .mode b { font: 700 16px var(--font-display); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink); }
 .mode span { color: var(--ink-dim); line-height: 1.45; }
@@ -224,7 +224,9 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       <dt>M, then click</dt><dd>Move (Shift to keep queuing)</dd>
       <dt>P, then click</dt><dd>Patrol between here and there</dd>
       <dt>X / G</dt><dd>Stop / Hold position</dd>
-      <dt>B</dt><dd>Return to the launch pad and swap batteries</dd>
+      <dt>B</dt><dd>Return to the launch pad and swap batteries (sea drones refuel at the sea dock)</dd>
+      <dt>N</dt><dd>Place a sea drone at the cursor (over water). In missions, launch 2 from the sea dock</dd>
+      <dt>V</dt><dd>Place an enemy patrol boat at the cursor (over water)</dd>
       <dt>D</dt><dd>Spawn a drone at the cursor</dd>
       <dt>T</dt><dd>Place a target at the cursor</dd>
       <dt>I</dt><dd>Place an enemy interceptor drone at the cursor</dd>
@@ -243,7 +245,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   </aside>
 
   <aside id="mission" hidden aria-label="Mission status">
-    <h2>Base Assault <span id="mClock">5:00</span></h2>
+    <h2><span id="mTitle">Base Assault</span> <span id="mClock">5:00</span></h2>
     <ul id="mObjectives"></ul>
     <p id="mForces"></p>
   </aside>
@@ -271,6 +273,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
         <button id="bTarget"><kbd>T</kbd>Target</button>
         <button id="bDelete"><kbd>Del</kbd>Remove</button>
         <button id="bReturn"><kbd>B</kbd>Return</button>
+        <button id="bNaval"><kbd>N</kbd>Sea drone</button>
       </div>
     </section>
   </footer>
@@ -279,8 +282,9 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       <h1>Swarm Command</h1>
       <p>Command a swarm of FPV strike drones. Pick a mode.</p>
       <div class="modes">
-        <button class="mode" id="playSandbox"><b>Sandbox</b><span>Free play. Spawn drones, place targets and jamming zones, and try anything.</span></button>
+        <button class="mode" id="playSandbox"><b>Sandbox</b><span>Free play. Spawn air and sea drones, place targets, enemy boats and jamming zones, and try anything.</span></button>
         <button class="mode" id="playAssault"><b>Base Assault</b><span>Destroy the command post, radar and fuel depot of a defended base in 5 minutes. Air defense shoots drones down, interceptor drones hunt yours, and a jammer covers the command post. You have 8 drones in the air and 16 in reserve.</span></button>
+        <button class="mode" id="playCoastal"><b>Coastal Strike</b><span>Air and sea together. Sink a frigate and destroy a coastal missile battery and a radar in 6 minutes. Sea drones hit hard but stay on the water, patrol boats and the frigate's guns shoot back, and air defense covers the shore.</span></button>
       </div>
     </div>
   </div>
@@ -313,8 +317,19 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   let PK = 0.6, expended = 0, dronesLost = false, shotDown = 0, ditched = 0;
   // battery: seconds of flight on a full pack; drones swap packs by landing on the launch pad
   const BATTERY = 60, SWAP_TIME = 3, PAD_R = 40;
+  // sea drones: explosive boats, slower but with a much bigger warhead and fuel for three minutes
+  const SEA_SPEED = 62, SEA_FUEL = 180, SEA_PK = 0.85, SEA_DAMAGE = 3, SEA_IMPACT = 20, SHORE = 16;
   let gameMode = 'sandbox';
-  const mission = { time: 0, reserve: 0, over: false, pad: { x: -560, y: 300 } };
+  const mission = { time: 0, reserve: 0, seaReserve: 0, over: false, pad: { x: -560, y: 300 }, dock: null, coast: null };
+  const isMission = () => gameMode !== 'sandbox';
+
+  // ---------- coastline ----------
+  // water is everything south of a wavy shoreline; modes without a coast have no water
+  const coastY = x => { const c = mission.coast; return c.y + 45 * Math.sin(x / 210 + c.ph) + 20 * Math.sin(x / 83 + 2 * c.ph); };
+  const isWater = (x, y) => !!mission.coast && y > coastY(x);
+  // targets a sea drone can reach: anything afloat or right on the shoreline
+  const canReach = (d, t) => !d.sea || (t.kind !== 'interceptor' && !!mission.coast && t.y > coastY(t.x) - SHORE);
+  const toWater = (x, y) => mission.coast ? { x, y: Math.max(y, coastY(x) + 12) } : { x, y };
   const floaters = [];
   let W = 0, H = 0, DPR = 1;
   const cam = { x: 0, y: 0, z: 1 };
@@ -351,6 +366,11 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     drones.push(d);
     return d;
   }
+  function spawnSea(x, y) {
+    const d = spawn(x, y);
+    d.sea = true; d.heading = 0;
+    return d;
+  }
   // what each kind of target is: hit points, map/feed size and colors, and its on-screen name
   const KINDS = {
     tank: { hp: 1, name: 'Armor' },
@@ -360,6 +380,9 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     aa: { hp: 1, name: 'Air defense', hl: 6, hw: 5, h: 3, color: '#4f5a3c', range: 160 },
     jammer: { hp: 1, name: 'Jammer', hl: 3, hw: 3, h: 16, color: '#596067' },
     interceptor: { hp: 1, name: 'Interceptor', detect: 150, leash: 300 },
+    missile: { hp: 2, name: 'Missile battery', hl: 9, hw: 6, h: 3, color: '#4f5544', objective: true },
+    boat: { hp: 1, name: 'Patrol boat', hl: 8, hw: 2.6, h: 2.4, color: '#59626a', naval: true, speed: 28, gun: 120 },
+    frigate: { hp: 4, name: 'Frigate', hl: 22, hw: 5.5, h: 4, color: '#5b646c', naval: true, speed: 9, objective: true, range: 170, gun: 110 },
   };
   function spawnTarget(x, y, kind = 'tank') {
     const k = KINDS[kind];
@@ -371,6 +394,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   function nearestTarget(d, r) {
     let best = null, bd = r;
     for (const t of targets) {
+      if (!canReach(d, t)) continue;
       const dist = Math.hypot(t.x - d.x, t.y - d.y);
       if (dist < bd) { bd = dist; best = t; }
     }
@@ -378,8 +402,8 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   }
   function strike(d, t) {
     d.dead = true; dronesLost = true; expended++;
-    const hit = Math.random() < PK;
-    if (hit) t.hp--;
+    const hit = Math.random() < (d.sea ? SEA_PK : PK);
+    if (hit) t.hp = Math.max(0, t.hp - (d.sea ? SEA_DAMAGE : 1));
     const kill = hit && t.hp <= 0;
     d.result = kill ? 'kill' : hit ? 'damaged' : 'miss';
     pings.push({ x: t.x, y: t.y, t: 0, color: hit ? COL.danger : COL.dim });
@@ -405,9 +429,9 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   function airDefense(t, dt) {
     t.cd -= dt;
     if (t.cd > 0) return;
-    const range = KINDS.aa.range;
+    const range = KINDS[t.kind].range;
     let near = null, nd = range;
-    for (const d of drones) { if (d.dead) continue; const dd = Math.hypot(d.x - t.x, d.y - t.y); if (dd < nd) { nd = dd; near = d; } }
+    for (const d of drones) { if (d.dead || d.sea) continue; const dd = Math.hypot(d.x - t.x, d.y - t.y); if (dd < nd) { nd = dd; near = d; } }
     if (!near) return;
     t.cd = AA_RELOAD;
     const hit = Math.random() < AA_PK;
@@ -415,6 +439,35 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     if (hit) {
       near.dead = true; near.shotDown = true; dronesLost = true; shotDown++;
       floaters.push({ x: near.x, y: near.y - 14, t: 0, text: 'SHOT DOWN', color: COL.danger });
+    }
+  }
+
+  // ---------- warships ----------
+  // ships sail back and forth between where they were placed and a waypoint; their guns engage
+  // sea drones and low-flying air drones, and the frigate also carries air defense
+  function ship(t, dt) {
+    const k = KINDS[t.kind];
+    const g = t.toWp ? t.wp : t.home;
+    if (g) {
+      const dx = g.x - t.x, dy = g.y - t.y, dist = Math.hypot(dx, dy);
+      if (dist < 8) t.toWp = !t.toWp;
+      else {
+        t.dir += wrap(Math.atan2(dy, dx) - t.dir) * Math.min(1, dt * 0.8);
+        t.x += Math.cos(t.dir) * k.speed * dt; t.y += Math.sin(t.dir) * k.speed * dt;
+      }
+    }
+    if (k.range) airDefense(t, dt);
+    t.cd2 = (t.cd2 || 0) - dt;
+    if (t.cd2 > 0) return;
+    let near = null, nd = k.gun;
+    for (const d of drones) { if (d.dead) continue; const dd = Math.hypot(d.x - t.x, d.y - t.y); if (dd < nd) { nd = dd; near = d; } }
+    if (!near) return;
+    t.cd2 = 1.4;
+    t.turret = Math.atan2(near.y - t.y, near.x - t.x);
+    shots.push({ x0: t.x, y0: t.y, x1: near.x, y1: near.y, t: 0 });
+    if (Math.random() < (near.sea ? 0.35 : 0.2)) {
+      near.dead = true; near.gunned = true; dronesLost = true; shotDown++;
+      floaters.push({ x: near.x, y: near.y - 14, t: 0, text: near.sea ? 'SUNK' : 'SHOT DOWN', color: COL.danger });
     }
   }
 
@@ -429,7 +482,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     if (!t.prey) {
       let nd = k.detect;
       for (const d of drones) {
-        if (d.dead || Math.hypot(d.x - t.home.x, d.y - t.home.y) > k.leash) continue;
+        if (d.dead || d.sea || Math.hypot(d.x - t.home.x, d.y - t.home.y) > k.leash) continue;
         const dd = Math.hypot(d.x - t.x, d.y - t.y);
         if (dd < nd) { nd = dd; t.prey = d; }
       }
@@ -473,10 +526,11 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     d.hold = false; d.blind = false;
   }
   // ---------- battery ----------
-  const nearPad = d => Math.hypot(d.x - mission.pad.x, d.y - mission.pad.y) < PAD_R;
+  const padFor = d => d.sea && mission.dock ? mission.dock : mission.pad;
+  const nearPad = d => Math.hypot(d.x - padFor(d).x, d.y - padFor(d).y) < PAD_R;
   function rtbOrder(d) {
     // each drone heads for its own spot on the pad so they don't pile up
-    const i = d.id % 9, p = mission.pad;
+    const i = d.id % 9, p = padFor(d);
     return { type: 'rtb', x: p.x + (i % 3 - 1) * 20, y: p.y + (Math.floor(i / 3) - 1) * 20, gid: ++gidSeq, slack: 12 };
   }
   function battery(d, o, foe, dt) {
@@ -494,15 +548,16 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       if (d.bat < 0.98) d.dock = SWAP_TIME;
       return false;
     }
-    d.bat -= dt * (0.6 + 0.4 * Math.min(1, Math.hypot(d.vx, d.vy) / SPEED)) / BATTERY;
+    const top = d.sea ? SEA_SPEED : SPEED;
+    d.bat -= dt * (0.6 + 0.4 * Math.min(1, Math.hypot(d.vx, d.vy) / top)) / (d.sea ? SEA_FUEL : BATTERY);
     if (d.bat <= 0) {
       d.dead = true; d.depleted = true; dronesLost = true; ditched++;
-      floaters.push({ x: d.x, y: d.y - 14, t: 0, text: 'BATTERY DEAD', color: COL.danger });
+      floaters.push({ x: d.x, y: d.y - 14, t: 0, text: d.sea ? 'OUT OF FUEL' : 'BATTERY DEAD', color: COL.danger });
       return true;
     }
     // bingo: just enough charge left to fly home, so turn back unless already committed to a strike
-    const home = Math.hypot(d.x - mission.pad.x, d.y - mission.pad.y) / SPEED;
-    if (!d.bingo && !d.jammed && !foe && !(o && o.type === 'rtb') && d.bat * BATTERY < home + 5) {
+    const home = Math.hypot(d.x - padFor(d).x, d.y - padFor(d).y) / top;
+    if (!d.bingo && !d.jammed && !foe && !(o && o.type === 'rtb') && d.bat * (d.sea ? SEA_FUEL : BATTERY) < home + 5) {
       d.bingo = true; d.hold = false;
       d.queue = [rtbOrder(d)];
       floaters.push({ x: d.x, y: d.y - 14, t: 0, text: 'BINGO · RETURNING', color: COL.patrol });
@@ -535,8 +590,10 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   }
 
   function issue(type, wx, wy, queue, target) {
-    const all = [...selected], sel = all.filter(d => !d.jammed);
-    noteJammed(all.length - sel.length);
+    const all = [...selected], ok = all.filter(d => !d.jammed);
+    noteJammed(all.length - ok.length);
+    const sel = target ? ok.filter(d => canReach(d, target)) : ok;
+    if (sel.length < ok.length) noteMode('Sea drones can only strike ships and targets on the shoreline.');
     if (!sel.length) return;
     const gid = ++gidSeq;
     const base = sel.map(d => queue ? lastPoint(d) : { x: d.x, y: d.y });
@@ -557,7 +614,8 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     const slack = inside ? 10 + 8 * Math.sqrt(n) : 10;
 
     sel.forEach((d, i) => {
-      const tx = wx + (base[i].x - cx) * scale, ty = wy + (base[i].y - cy) * scale;
+      let tx = wx + (base[i].x - cx) * scale, ty = wy + (base[i].y - cy) * scale;
+      if (d.sea) ({ x: tx, y: ty } = toWater(tx, ty));
       const order = target ? { type, target }
         : type === 'patrol' ? { type, a: { x: base[i].x, y: base[i].y }, b: { x: tx, y: ty }, toB: true }
         : { type, x: tx, y: ty, gid, slack };
@@ -608,7 +666,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       if (foe) {
         // dive straight in; on contact the drone is spent and rolls against the kill chance
         const ex = foe.x - d.x, ey = foe.y - d.y, ed = Math.hypot(ex, ey) || 0.01;
-        if (ed < IMPACT) { strike(d, foe); continue; }
+        if (ed < (d.sea ? SEA_IMPACT : IMPACT)) { strike(d, foe); continue; }
         ax += ((ex / ed) * SPEED * 1.15 - d.vx) * 6;
         ay += ((ey / ed) * SPEED * 1.15 - d.vy) * 6;
       } else if (o && o.type === 'hover') {
@@ -646,7 +704,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       // separation: drones keep a personal bubble so groups spread instead of stacking
       if (!d.hold) {
         for (const e of drones) {
-          if (e === d) continue;
+          if (e === d || e.sea !== d.sea) continue;  // boats and aircraft don't collide
           const dx = d.x - e.x, dy = d.y - e.y;
           if (Math.abs(dx) > SEP || Math.abs(dy) > SEP) continue;
           const dist = Math.hypot(dx, dy) || 0.01;
@@ -657,10 +715,15 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
         }
       }
       d.vx += ax * dt; d.vy += ay * dt;
-      const s = Math.hypot(d.vx, d.vy), max = SPEED * 1.15;
+      const s = Math.hypot(d.vx, d.vy), max = (d.sea ? SEA_SPEED : SPEED) * 1.15;
       if (s > max) { d.vx *= max / s; d.vy *= max / s; }
       if (d.hold) { d.vx *= 0.8; d.vy *= 0.8; }
       d.x += d.vx * dt; d.y += d.vy * dt;
+      if (d.sea && mission.coast) {
+        // boats slide along the shoreline instead of driving onto land
+        const shore = coastY(d.x) + 4;
+        if (d.y < shore) { d.y = shore; if (d.vy < 0) d.vy = 0; }
+      }
       if (s > 8) {
         const target = Math.atan2(d.vy, d.vx);
         let diff = target - d.heading;
@@ -682,6 +745,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       if (t.dead) continue;
       if (t.kind === 'aa') airDefense(t, dt);
       if (t.kind === 'interceptor') { interceptor(t, dt); continue; }
+      if (KINDS[t.kind].naval) { ship(t, dt); continue; }
       if (t.kind !== 'tank' && t.kind !== 'aa') continue;
       if (t.kind === 'tank') {
         // slow wander, leashed to where it was placed
@@ -699,7 +763,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     targets = targets.filter(t => !t.dead);
     for (const s of shots) s.t += dt;
     while (shots.length && shots[0].t > 0.25) shots.shift();
-    if (gameMode === 'assault') updateMission(dt);
+    if (isMission()) updateMission(dt);
     for (const p of pings) p.t += dt;
     while (pings.length && pings[0].t > 0.6) pings.shift();
 
@@ -722,6 +786,53 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       for (let y = Math.floor(tl.y / s) * s; y <= br.y; y += s) { ctx.moveTo(tl.x, y); ctx.lineTo(br.x, y); }
       ctx.stroke();
     }
+  }
+
+  function drawWater() {
+    if (!mission.coast) return;
+    const tl = toWorld(0, 0), br = toWorld(W, H);
+    if (br.y < coastY(tl.x) - 80 && br.y < coastY(br.x) - 80) return;
+    const step = 8 / Math.min(cam.z, 1);
+    ctx.beginPath();
+    ctx.moveTo(tl.x - step, br.y + 10);
+    for (let x = tl.x - step; x <= br.x + step; x += step) ctx.lineTo(x, Math.min(coastY(x), br.y + 10));
+    ctx.lineTo(br.x + step, br.y + 10);
+    ctx.closePath();
+    ctx.fillStyle = '#1b2731'; ctx.fill();
+    ctx.strokeStyle = 'rgba(125,180,215,0.45)'; ctx.lineWidth = 1.5 / cam.z;
+    ctx.beginPath();
+    for (let x = tl.x - step; x <= br.x + step; x += step) x === tl.x - step ? ctx.moveTo(x, coastY(x)) : ctx.lineTo(x, coastY(x));
+    ctx.stroke();
+    // a few swell lines parallel to the shore
+    ctx.strokeStyle = 'rgba(125,180,215,0.08)'; ctx.lineWidth = 1 / cam.z;
+    for (let k = 1; k <= 8; k++) {
+      ctx.beginPath();
+      for (let x = tl.x - step; x <= br.x + step; x += step) {
+        const y = coastY(x) + k * 48 + 6 * Math.sin(x / 40 + k);
+        x === tl.x - step ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+  }
+
+  function drawShip(t) {
+    const k = KINDS[t.kind];
+    if (k.range) {
+      ctx.strokeStyle = COL.danger; ctx.globalAlpha = 0.35; ctx.lineWidth = 1 / cam.z;
+      ctx.setLineDash([3 / cam.z, 5 / cam.z]);
+      ctx.beginPath(); ctx.arc(t.x, t.y, k.range, 0, 7); ctx.stroke();
+      ctx.setLineDash([]); ctx.globalAlpha = 1;
+    }
+    ctx.save(); ctx.translate(t.x, t.y); ctx.rotate(t.dir);
+    ctx.fillStyle = 'rgba(248,113,113,0.16)'; ctx.strokeStyle = COL.danger; ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(k.hl + 4, 0); ctx.lineTo(k.hl - 4, -k.hw); ctx.lineTo(-k.hl, -k.hw); ctx.lineTo(-k.hl, k.hw); ctx.lineTo(k.hl - 4, k.hw);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.rect(-k.hl * 0.35, -k.hw * 0.5, k.hl * 0.5, k.hw); ctx.stroke();
+    ctx.restore();
+    ctx.font = `600 ${9 / Math.min(cam.z, 1.4)}px "IBM Plex Mono", monospace`;
+    ctx.textAlign = 'center'; ctx.fillStyle = COL.danger;
+    ctx.fillText((k.objective ? '★ ' : '') + k.name.toUpperCase() + (k.hp > 1 ? ` ${t.hp}/${k.hp}` : ''), t.x, t.y + k.hw + 16);
   }
 
   function drawPaths() {
@@ -775,7 +886,14 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     ctx.strokeRect(p.x - 34, p.y - 34, 68, 68);
     ctx.beginPath(); ctx.arc(p.x, p.y, 16, 0, 7); ctx.stroke();
     ctx.globalAlpha = 1; ctx.fillStyle = COL.sel; ctx.textAlign = 'center';
-    ctx.fillText(gameMode === 'assault' ? `LAUNCH PAD · ${mission.reserve} IN RESERVE` : 'LAUNCH PAD · BATTERY SWAP', p.x, p.y + 50);
+    ctx.fillText(isMission() ? `LAUNCH PAD · ${mission.reserve} IN RESERVE` : 'LAUNCH PAD · BATTERY SWAP', p.x, p.y + 50);
+    const q = mission.dock;
+    if (!q) return;
+    ctx.strokeStyle = '#7db4d7'; ctx.globalAlpha = 0.7;
+    ctx.setLineDash([6 / cam.z, 4 / cam.z]);
+    ctx.strokeRect(q.x - 34, q.y - 34, 68, 68);
+    ctx.setLineDash([]); ctx.globalAlpha = 1; ctx.fillStyle = '#7db4d7';
+    ctx.fillText(isMission() ? `SEA DOCK · ${mission.seaReserve} IN RESERVE` : 'SEA DOCK · REFUEL', q.x, q.y + 50);
   }
 
   function drawZones() {
@@ -838,6 +956,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
 
   function drawTarget(t) {
     if (t.kind === 'interceptor') { drawInterceptor(t); return; }
+    if (KINDS[t.kind].naval) { drawShip(t); return; }
     if (t.kind !== 'tank') { drawStructure(t); return; }
     ctx.strokeStyle = COL.danger; ctx.lineWidth = 1.6;
     ctx.beginPath(); ctx.arc(t.x, t.y, 9, 0, 7); ctx.stroke();
@@ -855,6 +974,21 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     ctx.closePath(); ctx.fill();
   }
 
+  function drawBoat(d) {
+    // low, wedge-shaped explosive boat with a wake that grows with speed
+    const sp = Math.hypot(d.vx, d.vy) / SEA_SPEED;
+    ctx.save(); ctx.translate(d.x, d.y); ctx.rotate(d.heading);
+    if (sp > 0.1) {
+      ctx.strokeStyle = 'rgba(200,225,240,0.35)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(-6, -2); ctx.lineTo(-6 - 14 * sp, -5 - 4 * sp); ctx.moveTo(-6, 2); ctx.lineTo(-6 - 14 * sp, 5 + 4 * sp); ctx.stroke();
+    }
+    ctx.fillStyle = '#3a4046'; ctx.strokeStyle = '#9ccbe6'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(8, 0); ctx.lineTo(1, -3.6); ctx.lineTo(-6, -3.2); ctx.lineTo(-6, 3.2); ctx.lineTo(1, 3.6); ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = d.jammed ? COL.danger : d.hold ? COL.patrol : COL.sel;
+    ctx.beginPath(); ctx.arc(-1, 0, 1.4, 0, 7); ctx.fill();
+    ctx.restore();
+  }
   const batColor = b => b > 0.5 ? COL.sel : b > 0.25 ? COL.patrol : COL.danger;
   function drawDrone(d) {
     const isSel = selected.has(d);
@@ -862,6 +996,8 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       ctx.strokeStyle = COL.sel; ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.ellipse(d.x, d.y + 2, 11, 9, 0, 0, 7); ctx.stroke();
     }
+    if (d.sea) drawBoat(d);
+    else {
     ctx.save();
     ctx.translate(d.x, d.y);
     ctx.rotate(d.heading + Math.PI / 4);
@@ -880,6 +1016,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     ctx.fillStyle = d.jammed ? COL.danger : d.hold ? COL.patrol : COL.sel;
     ctx.beginPath(); ctx.arc(3.2, 0, 1.3, 0, 7); ctx.fill();
     ctx.restore();
+    }
     // battery gauge; while swapping it refills to show progress
     const lvl = d.dock > 0 ? 1 - d.dock / SWAP_TIME : d.bat;
     ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(d.x - 7, d.y + 11, 14, 2.5);
@@ -892,6 +1029,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     ctx.fillStyle = COL.ground; ctx.fillRect(0, 0, W, H);
     ctx.setTransform(DPR * cam.z, 0, 0, DPR * cam.z, DPR * (W / 2 - cam.x * cam.z), DPR * (H / 2 - cam.y * cam.z));
     drawGrid();
+    drawWater();
     if (gameMode === 'assault') drawBase();
     drawPad();
     drawZones();
@@ -1061,6 +1199,34 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     selectOnly(launched);
     renderTally();
   }
+  function seaDrones() {
+    // missions launch two boats from the sea dock; the sandbox drops one at the cursor
+    if (!mission.coast) { noteMode('No water on this map. Sea drones need a coastline.'); return; }
+    if (isMission()) {
+      if (mission.over || !mission.dock || !mission.seaReserve) { noteMode(mission.seaReserve ? '' : 'No sea drones left in reserve.'); return; }
+      const n = Math.min(2, mission.seaReserve), q = mission.dock, launched = [];
+      mission.seaReserve -= n;
+      for (let i = 0; i < n; i++) launched.push(spawnSea(q.x - 12 + i * 24, q.y));
+      pings.push({ x: q.x, y: q.y, t: 0, color: COL.sel });
+      selectOnly(launched);
+      renderTally();
+      return;
+    }
+    const p = mouse.inside ? toWorld(mouse.x, mouse.y) : { x: cam.x, y: cam.y };
+    if (!isWater(p.x, p.y)) { noteMode('Put the cursor over water to place a sea drone.'); return; }
+    spawnSea(p.x, p.y);
+    pings.push({ x: p.x, y: p.y, t: 0, color: COL.ink });
+    renderHUD();
+  }
+  function boatAtCursor() {
+    const p = mouse.inside ? toWorld(mouse.x, mouse.y) : { x: cam.x, y: cam.y };
+    if (!isWater(p.x, p.y)) { noteMode('Put the cursor over water to place an enemy boat.'); return; }
+    const t = spawnTarget(p.x, p.y, 'boat');
+    t.dir = Math.random() * 6.3;
+    t.wp = toWater(p.x + Math.cos(t.dir) * 160, p.y + Math.sin(t.dir) * 160);
+    pings.push({ x: p.x, y: p.y, t: 0, color: COL.danger });
+    renderTally();
+  }
   function noteMode(text) {
     if (!text) return;
     jamNote = { text, t: 2.5 };
@@ -1097,16 +1263,18 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       case 'KeyM': setMode('move'); break;
       case 'KeyP': setMode('patrol'); break;
       case 'KeyA': setMode('attack'); break;
-      case 'KeyT': if (gameMode === 'assault') noteMode('Targets are fixed in Base Assault.'); else targetAtCursor(); break;
-      case 'KeyI': if (gameMode === 'assault') noteMode('Targets are fixed in Base Assault.'); else interceptorAtCursor(); break;
-      case 'KeyJ': if (gameMode === 'assault') noteMode('Jamming is fixed in Base Assault.'); else toggleZone(); break;
+      case 'KeyT': if (isMission()) noteMode('Targets are fixed in missions.'); else targetAtCursor(); break;
+      case 'KeyI': if (isMission()) noteMode('Targets are fixed in missions.'); else interceptorAtCursor(); break;
+      case 'KeyV': if (isMission()) noteMode('Targets are fixed in missions.'); else boatAtCursor(); break;
+      case 'KeyJ': if (isMission()) noteMode('Jamming is fixed in missions.'); else toggleZone(); break;
+      case 'KeyN': seaDrones(); break;
       case 'Tab': e.preventDefault(); cycleFpv(); break;
       case 'KeyS': setMode('stalk'); break;
       case 'KeyX': stop(); break;
       case 'KeyH': setMode('hover'); break;
       case 'KeyG': hold(); break;
       case 'KeyB': returnToPad(); break;
-      case 'KeyD': if (gameMode === 'assault') launchReserve(); else spawnAtCursor(); break;
+      case 'KeyD': if (isMission()) launchReserve(); else spawnAtCursor(); break;
       case 'KeyQ': case 'KeyE': case 'KeyZ': case 'KeyC': keys.add(c); break;
       case 'F2': e.preventDefault(); selectOnly(drones); break;
       case 'Escape': if (mode) setMode(null); else selectOnly([]); break;
@@ -1125,7 +1293,25 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   const fc = document.getElementById('fpvc'), fx = fc.getContext('2d');
   const fpv = { drone: null, lost: 0, scroll: 0, bank: 0, pitch: 0, prevHeading: 0, clock: 0, label: '', look: 0, tilt: 0 };
   const TILT_UP = 0.35, TILT_DOWN = 1.2; // about 20° up and 70° down
-  const HALF_FOV = Math.atan(0.5 / 0.9), SIGHT = 520;
+  const HALF_FOV = Math.atan(0.5 / 0.9), SIGHT = 520, AIR_CAM = 18, SEA_CAM = 2.5;
+  // paint water onto the camera's ground plane: on screen, a ground cell at depth z and lateral
+  // slope u is a plain rectangle, so sample a grid of them and fill the wet ones
+  const FPV_DEPTHS = Array.from({ length: 34 }, (_, i) => 3 * Math.pow(1.19, i));
+  function drawFpvWater(d, view, w, h, horizon, focal, camH) {
+    if (!mission.coast) return;
+    const cv = Math.cos(view), sv = Math.sin(view), cols = 72, span = 1.6;
+    fx.fillStyle = '#2a4352';
+    for (let i = 0; i < FPV_DEPTHS.length; i++) {
+      const z0 = FPV_DEPTHS[i], z1 = i + 1 < FPV_DEPTHS.length ? FPV_DEPTHS[i + 1] : 1e5, zm = Math.min((z0 + z1) / 2, 2500);
+      const y0 = horizon + camH * focal / z0, y1 = horizon + camH * focal / z1;
+      if (y1 > 3 * h) continue;
+      for (let j = 0; j < cols; j++) {
+        const u0 = (j / cols - 0.5) * 2 * span, u1 = ((j + 1) / cols - 0.5) * 2 * span, r = (u0 + u1) / 2 * zm;
+        if (!isWater(d.x + zm * cv - r * sv, d.y + zm * sv + r * cv)) continue;
+        fx.fillRect(w / 2 + u0 * focal - 0.5, y1 - 0.5, (u1 - u0) * focal + 1, y0 - y1 + 1);
+      }
+    }
+  }
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
 
@@ -1238,6 +1424,21 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       [t.dir, 0, k.hl, k.hw, 0, 2, '#3f454b'],
       [t.dir, 0, 0.8, 0.8, 2, k.h, k.color],
       [t.dir, 0, 2.6, 0.4, k.h - 3, k.h - 2.4, '#7d8891'],
+    ] : t.kind === 'boat' ? [
+      [t.dir, 0, k.hl, k.hw, 0, k.h, k.color],
+      [t.dir, -1.5, 2.6, 1.8, k.h, k.h + 2.4, '#6b757d'],
+      [t.turret, 5, 1.2, 0.3, k.h + 0.4, k.h + 1, '#4a5258'],
+    ] : t.kind === 'frigate' ? [
+      [t.dir, 0, k.hl, k.hw, 0, k.h, k.color],
+      [t.dir, 0, 3, k.hw * 0.25, 0, k.h * 0.8, k.color],
+      [t.dir, 21, 3, k.hw * 0.4, 0, k.h * 0.7, k.color],
+      [t.dir, -2, 8, k.hw * 0.7, k.h, k.h + 5, '#6b757d'],
+      [t.dir, -1, 0.8, 0.8, k.h + 5, k.h + 13, '#7d8891'],
+      [t.turret, 12, 2, 2, k.h, k.h + 1.6, '#4a5258'],
+    ] : t.kind === 'missile' ? [
+      [t.dir, 0, k.hl, k.hw, 0, k.h, k.color],
+      [t.turret, 0, 7, 1.2, k.h, k.h + 2.4, '#626a57'],
+      [t.turret, 0, 7, 1.2, k.h + 2.4, k.h + 4.8, '#6b7360'],
     ] : t.kind === 'fuel' ? [
       [t.dir, -5, 4.5, 4.5, 0, k.h, k.color],
       [t.dir, 5, 4.5, 4.5, 0, k.h, k.color],
@@ -1281,6 +1482,8 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
 
   // friendly altitude in camera units: cruising drones sit near the camera's height, striking ones drop toward the ground
   function droneAlt(o, camH) {
+    if (o.sea) return 0.6;
+    camH = AIR_CAM;
     const foe = o.foe && !o.foe.dead ? o.foe : null;
     if (foe) return camH * clamp(Math.hypot(foe.x - o.x, foe.y - o.y) / 160, 0.05, 1);
     return camH + (((o.id * 37) % 9) - 4) * 0.8;
@@ -1325,7 +1528,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     const dx = t.x - d.x, dy = t.y - d.y;
     const f = dx * cv + dy * sv, r = -dx * sv + dy * cv;
     if (f < 3) return null;
-    const s = focal / f, x = w / 2 + (r / f) * focal, y = horizon + ((camH - (camH + 1.5)) / f) * focal;
+    const s = focal / f, x = w / 2 + (r / f) * focal, y = horizon + ((camH - (AIR_CAM + 1.5)) / f) * focal;
     const arm = Math.max(3, 0.55 * s), rr = arm * 0.62, squash = 0.3;
     fx.save(); fx.translate(x, y);
     fx.strokeStyle = '#f2a1a1'; fx.lineWidth = Math.max(1, arm * 0.14);
@@ -1350,6 +1553,14 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       return [w / 2 + (-dx * sv + dy * cv) * k, h / 2 - (dx * cv + dy * sv) * k];
     };
     fx.fillStyle = '#3a3f34'; fx.fillRect(0, 0, w, h);
+    if (mission.coast) {
+      fx.fillStyle = '#2a4352';
+      for (let gx = -70; gx < 70; gx += 5) for (let gy = -70; gy < 70; gy += 5) {
+        if (!isWater(d.x + gx + 2.5, d.y + gy + 2.5)) continue;
+        const a = toS(d.x + gx, d.y + gy), b = toS(d.x + gx + 5, d.y + gy), c = toS(d.x + gx + 5, d.y + gy + 5), e = toS(d.x + gx, d.y + gy + 5);
+        fx.beginPath(); fx.moveTo(a[0], a[1]); fx.lineTo(b[0], b[1]); fx.lineTo(c[0], c[1]); fx.lineTo(e[0], e[1]); fx.closePath(); fx.fill();
+      }
+    }
     fx.strokeStyle = 'rgba(220,230,210,0.09)'; fx.lineWidth = 1;
     fx.beginPath();
     const R = 120, g = 12;
@@ -1426,14 +1637,16 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     const band = (fpv.clock * 90) % (h + 30) - 15;
     fx.fillStyle = 'rgba(255,255,255,0.08)'; fx.fillRect(0, band, w, 14);
     fx.font = '600 13px "IBM Plex Mono", monospace';
-    osdText(d && d.jammed && !d.shotDown && !d.intercepted && !d.depleted ? 'LINK LOST' : 'SIGNAL LOST', w / 2, h / 2 - 4, 'center', '#ffffff');
+    osdText(d && d.jammed && !d.shotDown && !d.intercepted && !d.depleted && !d.gunned ? 'LINK LOST' : 'SIGNAL LOST', w / 2, h / 2 - 4, 'center', '#ffffff');
     fx.font = '500 10px "IBM Plex Mono", monospace';
     if (d && d.shotDown) {
       osdText('SHOT DOWN BY AIR DEFENSE', w / 2, h / 2 + 14, 'center', COL.danger);
     } else if (d && d.depleted) {
-      osdText('BATTERY DEPLETED · DRONE DOWN', w / 2, h / 2 + 14, 'center', COL.danger);
+      osdText(d.sea ? 'OUT OF FUEL · BOAT ADRIFT' : 'BATTERY DEPLETED · DRONE DOWN', w / 2, h / 2 + 14, 'center', COL.danger);
     } else if (d && d.intercepted) {
       osdText('RAMMED BY INTERCEPTOR', w / 2, h / 2 + 14, 'center', COL.danger);
+    } else if (d && d.gunned) {
+      osdText(d.sea ? 'SUNK BY SHIP GUNFIRE' : 'SHOT DOWN BY SHIP GUNFIRE', w / 2, h / 2 + 14, 'center', COL.danger);
     } else if (d && d.jammed) {
       // the feed cut inside the jamming zone, so the operator never sees how it ends
       const line = d.dead ? 'NO FEED · RESULT UNKNOWN' : d.blind ? 'JAMMED · STRIKING BLIND' : 'JAMMED · FAILSAFE: RETURNING';
@@ -1460,7 +1673,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     fpv.bank += (clamp(turn * 0.22 * Math.min(1, speed / 50), -0.45, 0.45) - fpv.bank) * Math.min(1, dt * 5);
 
     const foe = d.foe && !d.foe.dead ? d.foe : null;
-    const focal = w * 0.9, camH = 18, base = h * 0.42;
+    const focal = w * 0.9, camH = d.sea ? SEA_CAM : AIR_CAM, base = h * 0.42;
     const view = fpv.look;
     let dist = 0, bearing = 0, zd = 0;
     if (foe) {
@@ -1501,6 +1714,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     }
     fx.lineTo(2 * w, horizon); fx.closePath(); fx.fill();
     fx.fillStyle = '#3a3f34'; fx.fillRect(-w, horizon, 3 * w, 3 * h + Math.max(0, -horizon));
+    drawFpvWater(d, view, w, h, horizon, focal, camH);
     fx.strokeStyle = 'rgba(220,230,210,0.09)'; fx.lineWidth = 1;
     fx.beginPath();
     const spacing = 12, off = fpv.scroll % spacing;
@@ -1613,7 +1827,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     fx.stroke();
 
     const white = 'rgba(240,244,246,0.92)';
-    osdText(`CAM ${String(d.id).padStart(2, '0')}`, 8, 14, 'left', white);
+    osdText(`${d.sea ? 'USV' : 'CAM'} ${String(d.id).padStart(2, '0')}`, 8, 14, 'left', white);
     if (Math.sin(fpv.clock * 4) > 0) { fx.fillStyle = COL.danger; fx.beginPath(); fx.arc(w - 40, 10.5, 3, 0, 7); fx.fill(); }
     osdText('REC', w - 8, 14, 'right', white);
     const hdg = ((view * 180 / Math.PI + 90 + 720) % 360) | 0;
@@ -1622,9 +1836,9 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     const gimbal = [yawDeg ? `CAM ${yawDeg < 0 ? '◀' : '▶'} ${Math.abs(yawDeg)}°` : '', tiltDeg ? `TILT ${tiltDeg > 0 ? '▼' : '▲'} ${Math.abs(tiltDeg)}°` : ''].filter(Boolean).join('  ');
     if (nadir) osdText('NADIR VIEW', w / 2, 14, 'center', COL.track);
     else if (gimbal) osdText(gimbal, w / 2, 14, 'center', COL.patrol);
-    const alt = foe ? Math.max(1, Math.round(Math.min(40, dist * 0.25))) : 40;
+    const alt = d.sea ? 0 : foe ? Math.max(1, Math.round(Math.min(40, dist * 0.25))) : 40;
     osdText(`SPD ${Math.round(speed * 0.6)} km/h  ALT ${alt}m  HDG ${String(hdg).padStart(3, '0')}`, 8, h - 8, 'left', white);
-    osdText(`BAT ${Math.max(0, Math.round(d.bat * 100))}%`, w - 8, h - 8, 'right', d.bat > 0.5 ? white : batColor(d.bat));
+    osdText(`${d.sea ? 'FUEL' : 'BAT'} ${Math.max(0, Math.round(d.bat * 100))}%`, w - 8, h - 8, 'right', d.bat > 0.5 ? white : batColor(d.bat));
 
     fx.font = '600 11px "IBM Plex Mono", monospace';
     const n = contacts.length;
@@ -1651,6 +1865,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   const countEl = document.getElementById('selcount');
   const statusEl = document.getElementById('status');
   const helpEl = document.getElementById('help');
+  const SEA_ICON = '<svg viewBox="-10 -10 20 20" aria-hidden="true"><path d="M9 0L1-4.5H-8v9H1z" stroke="#9ccbe6" stroke-width="1.8" fill="none"/></svg>';
   const ICON = '<svg viewBox="-10 -10 20 20" aria-hidden="true"><g stroke="currentColor" stroke-width="1.8" fill="none"><path d="M-6-6L6 6M6-6L-6 6"/><circle cx="-6" cy="-6" r="3"/><circle cx="6" cy="-6" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="-6" cy="6" r="3"/></g></svg>';
 
   for (let i = 1; i <= 10; i++) {
@@ -1677,7 +1892,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   function renderTally() {
     const dark = drones.filter(d => d.jammed).length;
     tallyEl.innerHTML = `Targets <b>${targets.length}</b> · Destroyed ${kills} · Drones spent ${expended}` + (shotDown ? ` · Lost to defenses ${shotDown}` : '') + (ditched ? ` · Batteries died ${ditched}` : '') + (dark ? ` · <b>${dark} jammed</b>` : '');
-    if (gameMode === 'assault') renderMission();
+    if (isMission()) renderMission();
   }
   const pkEl = document.getElementById('pk'), pkOut = document.getElementById('pkOut');
   pkEl.addEventListener('input', () => { PK = pkEl.value / 100; pkOut.textContent = pkEl.value + '%'; });
@@ -1695,8 +1910,8 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     for (const d of shown) {
       const b = document.createElement('button');
       b.className = 'cell' + (d.hold ? ' held' : '');
-      b.title = `Drone ${d.id}, battery ${Math.max(0, Math.round(d.bat * 100))}%${d.jammed ? ', out of contact (jammed)' : d.hold ? ', holding' : d.queue.length ? `, ${d.queue.length} order${d.queue.length > 1 ? 's' : ''} queued` : ', idle'}. Click to select only this one, Shift-click to drop it.`;
-      b.innerHTML = ICON + `<i style="width:${Math.max(0, d.bat) * 16}px;background:${d.dock > 0 ? COL.track : batColor(d.bat)}"></i>`;
+      b.title = `${d.sea ? 'Sea drone' : 'Drone'} ${d.id}, ${d.sea ? 'fuel' : 'battery'} ${Math.max(0, Math.round(d.bat * 100))}%${d.jammed ? ', out of contact (jammed)' : d.hold ? ', holding' : d.queue.length ? `, ${d.queue.length} order${d.queue.length > 1 ? 's' : ''} queued` : ', idle'}. Click to select only this one, Shift-click to drop it.`;
+      b.innerHTML = (d.sea ? SEA_ICON : ICON) + `<i style="width:${Math.max(0, d.bat) * 16}px;background:${d.dock > 0 ? COL.track : batColor(d.bat)}"></i>`;
       b.style.color = d.jammed ? COL.danger : d.queue.length ? COL.sel : d.hold ? COL.patrol : COL.dim;
       b.addEventListener('click', e => {
         if (e.shiftKey) { selected.delete(d); renderHUD(); }
@@ -1729,30 +1944,33 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   btn('bMove', () => setMode('move'));
   btn('bPatrol', () => setMode('patrol'));
   btn('bAttack', () => setMode('attack'));
-  btn('bTarget', () => { if (gameMode === 'assault') noteMode('Targets are fixed in Base Assault.'); else targetAtCursor(); });
+  btn('bTarget', () => { if (isMission()) noteMode('Targets are fixed in missions.'); else targetAtCursor(); });
   btn('bStop', stop);
   btn('bStalk', () => setMode('stalk'));
   btn('bHover', () => setMode('hover'));
   btn('bHold', hold);
   btn('bSpawn', () => {
-    if (gameMode === 'assault') { launchReserve(); return; }
+    if (isMission()) { launchReserve(); return; }
     for (let i = 0; i < 4; i++) spawn(cam.x + (Math.random() - 0.5) * 60, cam.y + (Math.random() - 0.5) * 60);
     renderHUD();
   });
   btn('bDelete', removeSelected);
   btn('bReturn', returnToPad);
+  btn('bNaval', seaDrones);
   btn('helpBtn', () => { helpEl.hidden = !helpEl.hidden; });
   if (window.innerWidth < 720) helpEl.hidden = true;
 
   // ---------- modes ----------
   const missionEl = document.getElementById('mission'), mClock = document.getElementById('mClock');
   const mObjectives = document.getElementById('mObjectives'), mForces = document.getElementById('mForces');
+  const mTitle = document.getElementById('mTitle');
   const menuEl = document.getElementById('menu'), endEl = document.getElementById('endCard');
   const MISSION_TIME = 300;
   const spawnBtn = document.getElementById('bSpawn');
 
   function resetWorld() {
     drones = []; targets = []; zones = []; selected = new Set();
+    mission.coast = null; mission.dock = null; mission.seaReserve = 0;
     for (let i = 0; i < 10; i++) groups[i] = [];
     floaters.length = 0; pings.length = 0; shots.length = 0; arrived.clear();
     kills = 0; expended = 0; shotDown = 0; ditched = 0; nextId = 1;
@@ -1768,11 +1986,18 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     spawnBtn.innerHTML = '<kbd>D</kbd>Spawn';
     cam.x = 0; cam.y = 0; cam.z = 1;
     mission.pad = { x: -420, y: -30 };
+    // a strip of sea along the south edge, with a dock for sea drones
+    mission.coast = { y: 390, ph: 0.4 };
+    mission.dock = { x: -420, y: 520 };
     const alpha = [], bravo = [];
     for (let i = 0; i < 6; i++) alpha.push(spawn(-180 + (i % 3) * 22, -40 + Math.floor(i / 3) * 22));
     for (let i = 0; i < 4; i++) bravo.push(spawn(120 + (i % 2) * 22, 60 + Math.floor(i / 2) * 22));
     groups[1] = alpha; groups[2] = bravo;
     spawnTarget(-60, -230); spawnTarget(300, -150); spawnTarget(-300, 170); spawnTarget(60, 230);
+    const boat = spawnTarget(120, 560, 'boat');
+    boat.wp = { x: 380, y: 560 };
+    const delta = [spawnSea(-440, 520), spawnSea(-400, 520)];
+    groups[3] = delta;
     zones.push({ x: 300, y: -150, r: 120 });
     selected = new Set(bravo);
     issue('patrol', 120, -120, false);
@@ -1785,7 +2010,8 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     resetWorld();
     gameMode = 'assault';
     spawnBtn.innerHTML = '<kbd>D</kbd>Launch';
-    Object.assign(mission, { time: MISSION_TIME, reserve: 16, over: false, startDrones: 24, pad: { x: -560, y: 300 } });
+    Object.assign(mission, { name: 'Base Assault', setup: setupAssault, time: MISSION_TIME, limit: MISSION_TIME, reserve: 16, over: false, startDrones: 24, stars: [12, 18],
+      objectives: ['cp', 'radar', 'fuel'], pad: { x: -560, y: 300 } });
     // the base: three objectives, two air-defense sites, a jammer over the command post, and armor on patrol
     spawnTarget(290, -140, 'cp');
     spawnTarget(420, -280, 'radar');
@@ -1813,38 +2039,71 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     renderHUD(); renderStatus(); renderTally();
   }
 
+  function setupCoastal() {
+    resetWorld();
+    gameMode = 'coastal';
+    spawnBtn.innerHTML = '<kbd>D</kbd>Launch';
+    Object.assign(mission, { name: 'Coastal Strike', setup: setupCoastal, time: 360, limit: 360, reserve: 10, seaReserve: 4, over: false, startDrones: 23, stars: [10, 15],
+      objectives: ['frigate', 'missile', 'radar'], pad: { x: -470, y: 20 }, dock: { x: -520, y: 300 }, coast: { y: 120, ph: 0.6 } });
+    // on land: a coastal missile battery right on the shore, a radar inland, air defense and an interceptor
+    spawnTarget(150, coastY(150) - 10, 'missile');
+    spawnTarget(340, -200, 'radar');
+    spawnTarget(60, 60, 'aa');
+    spawnTarget(280, -110, 'aa');
+    spawnTarget(330, -120, 'interceptor');
+    // at sea: the frigate cruises slowly offshore with two patrol boats screening it
+    const fr = spawnTarget(300, 330, 'frigate'); fr.wp = { x: 500, y: 300 }; fr.dir = 0;
+    const b1 = spawnTarget(80, 250, 'boat'); b1.wp = { x: -160, y: 240 };
+    const b2 = spawnTarget(380, 430, 'boat'); b2.wp = { x: 580, y: 400 }; b2.dir = 0;
+    const p = mission.pad, air = [], sea = [];
+    for (let i = 0; i < 6; i++) air.push(spawn(p.x - 22 + (i % 3) * 22, p.y - 11 + Math.floor(i / 3) * 22));
+    for (let i = 0; i < 3; i++) sea.push(spawnSea(mission.dock.x - 24 + i * 24, mission.dock.y));
+    groups[1] = air; groups[2] = sea;
+    selected = new Set(air);
+    const left = 16, right = W - 290, top = 50, bottom = H - 130;
+    cam.z = clamp(Math.min((right - left) / 1260, (bottom - top) / 760), 0.35, 1);
+    cam.x = 10 - ((left + right) / 2 - W / 2) / cam.z;
+    cam.y = 110 - ((top + bottom) / 2 - H / 2) / cam.z;
+    helpEl.hidden = true;
+    missionEl.hidden = false;
+    renderHUD(); renderStatus(); renderTally();
+  }
+
   function renderMission() {
     const left = Math.max(0, Math.ceil(mission.time));
     mClock.textContent = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
     mClock.className = left <= 60 ? 'low' : '';
     let html = '';
-    for (const kind of ['cp', 'radar', 'fuel']) {
+    mTitle.textContent = mission.name;
+    for (const kind of mission.objectives) {
       const t = targets.find(q => q.kind === kind);
       const k = KINDS[kind];
       html += `<li class="${t ? '' : 'done'}"><span>${k.name}</span><b>${t ? (k.hp > 1 ? `${t.hp}/${k.hp} HP` : 'standing') : 'destroyed'}</b></li>`;
     }
     mObjectives.innerHTML = html;
-    mForces.textContent = `Drones ${drones.length} in the air · ${mission.reserve} in reserve (D to launch)`;
+    const sea = drones.filter(d => d.sea).length;
+    mForces.textContent = `Drones ${drones.length - sea} in the air · ${mission.reserve} in reserve (D to launch)` +
+      (mission.dock ? ` · Sea drones ${sea} afloat · ${mission.seaReserve} in reserve (N to launch)` : '');
   }
   function updateMission(dt) {
     if (mission.over) return;
     mission.time -= dt;
-    const remaining = ['cp', 'radar', 'fuel'].filter(kind => targets.some(t => t.kind === kind && !t.dead));
+    const remaining = mission.objectives.filter(kind => targets.some(t => t.kind === kind && !t.dead));
     if (!remaining.length) endMission(true, 'All three objectives destroyed.');
     else if (mission.time <= 0) endMission(false, 'Time ran out with objectives still standing.');
-    else if (!drones.length && !mission.reserve) endMission(false, 'Every drone is gone and objectives are still standing.');
+    else if (!drones.length && !mission.reserve && !mission.seaReserve) endMission(false, 'Every drone is gone and objectives are still standing.');
   }
   function endMission(win, why) {
     mission.over = true;
     renderMission();
-    const used = mission.startDrones - mission.reserve - drones.length;
-    const stars = !win ? 0 : used <= 12 ? 3 : used <= 18 ? 2 : 1;
+    const used = mission.startDrones - mission.reserve - mission.seaReserve - drones.length;
+    const stars = !win ? 0 : used <= mission.stars[0] ? 3 : used <= mission.stars[1] ? 2 : 1;
     const titleEl = document.getElementById('endTitle');
     titleEl.textContent = win ? 'Mission complete' : 'Mission failed';
     titleEl.className = win ? 'win' : 'lose';
     document.getElementById('endText').textContent = why + (win ? ' Fewer drones used earns more stars.' : '');
     document.getElementById('endRating').textContent = win ? '★'.repeat(stars) + '☆'.repeat(3 - stars) : '';
-    const t = MISSION_TIME - Math.max(0, mission.time);
+    const t = mission.limit - Math.max(0, mission.time);
     document.getElementById('endStats').innerHTML =
       `<dt>Time</dt><dd>${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}</dd>` +
       `<dt>Drones used</dt><dd>${used} of ${mission.startDrones}</dd>` +
@@ -1857,7 +2116,8 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
 
   document.getElementById('playSandbox').addEventListener('click', () => { menuEl.hidden = true; setupSandbox(); });
   document.getElementById('playAssault').addEventListener('click', () => { menuEl.hidden = true; setupAssault(); });
-  document.getElementById('endRetry').addEventListener('click', () => { endEl.hidden = true; setupAssault(); });
+  document.getElementById('playCoastal').addEventListener('click', () => { menuEl.hidden = true; setupCoastal(); });
+  document.getElementById('endRetry').addEventListener('click', () => { endEl.hidden = true; mission.setup(); });
   document.getElementById('endMenu').addEventListener('click', () => { endEl.hidden = true; menuEl.hidden = false; setupSandbox(); });
   btn('menuBtn', () => { endEl.hidden = true; menuEl.hidden = false; });
 
