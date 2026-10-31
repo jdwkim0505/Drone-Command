@@ -123,6 +123,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
 #barrage li .meta { color: var(--ink-dim); font-size: 11px; }
 #barrage .go { width: 100%; padding: 8px; font: 600 12px var(--font-display); letter-spacing: 0.12em; text-transform: uppercase; border-color: var(--sel); color: var(--sel); }
 #barrage .go:disabled { opacity: 0.4; }
+#barrage .ai { width: 100%; padding: 7px; margin-bottom: 6px; font-size: 12px; border-color: var(--track); color: var(--track); }
 #barrage .speeds { display: flex; gap: 4px; margin-bottom: 8px; }
 #barrage .speeds button.on { border-color: var(--sel); color: var(--sel); }
 .label { font: 600 10px var(--font-display); letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-dim); margin-bottom: 6px; }
@@ -2178,6 +2179,8 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     cruise: { name: 'Cruise missile', cost: 8, usd: 1.5e6, speed: 210, damage: 3, blast: 16, count: 2, gap: 1.2, color: '#f472b6', low: true, drift: 0.15, note: 'Fast, low, 3 damage' },
     usv: { name: 'Sea drone', cost: 5, usd: 250e3, speed: 62, damage: 3, blast: 18, count: 2, gap: 1, color: '#7dd3fc', sea: true, drift: 0, note: 'Water only, 3 damage' },
   };
+  // the best plan found by the neural network in ai/ (regenerate with: python ai/export_plan.py --js)
+  const AI_PLAN = [{"type":"cruise","count":1,"delay":5,"route":[[-300,250],[540,250],[620,-120]]},{"type":"cruise","count":1,"delay":10,"route":[[-100,-430],[560,-460],[560,-330]]},{"type":"cruise","count":1,"delay":5,"route":[[-300,250],[640,250],[720,30]]},{"type":"cruise","count":1,"delay":5,"route":[[-300,250],[420,250],[500,164]]},{"type":"cruise","count":1,"delay":0,"route":[[-300,250],[280,250],[360,40]]}];
   const TOOL_KEYS = { Digit1: 'shahed', Digit2: 'decoy', Digit3: 'cruise', Digit4: 'usv' };
   const SAM_USD = 3e6, SHIP_SAM_USD = 1.2e6, INTERCEPTOR_USD = 20e3, GUN_PK = 0.06;
   const barrage = { phase: 'plan', budget: 80, by: {}, salvos: [], tool: null, draft: [], clock: 0, munitions: [], missiles: [], speed: 1, redirect: null,
@@ -2504,7 +2507,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       html += `</div>${plan ? `<button data-act="rm" data-i="${i}" title="Remove salvo">×</button>` : '<span></span>'}</li>`;
     });
     html += '</ul>';
-    if (plan) html += `<button class="go" id="bLaunch" ${barrage.salvos.length ? '' : 'disabled'}>Launch <kbd>Space</kbd></button>`;
+    if (plan) html += `<button class="ai" id="bAi">Load the AI's plan</button><button class="go" id="bLaunch" ${barrage.salvos.length ? '' : 'disabled'}>Launch <kbd>Space</kbd></button>`;
     barrageEl.innerHTML = html;
   }
   barrageEl.addEventListener('click', e => {
@@ -2514,6 +2517,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     if (b.dataset.tool) { setTool(b.dataset.tool); return; }
     if (b.dataset.speed) { barrage.speed = +b.dataset.speed; renderBarrage(); return; }
     if (b.id === 'bLaunch') { launchBarrage(); return; }
+    if (b.id === 'bAi') { loadPlan(AI_PLAN); noteMode("The AI's plan is loaded. Press Space to watch it fly."); return; }
     const s = barrage.salvos[+b.dataset.i];
     if (!s) return;
     const M = MUNITIONS[s.type];
@@ -2558,7 +2562,36 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   document.getElementById('endMenu').addEventListener('click', () => { endEl.hidden = true; menuEl.hidden = false; setupSandbox(); });
   btn('menuBtn', () => { endEl.hidden = true; menuEl.hidden = false; });
 
+  // a ?plan= link (made by ai/export_plan.py) opens Barrage with that plan loaded in the planner
+  function planFromLink() {
+    const code = new URLSearchParams(location.search).get('plan');
+    if (!code) return null;
+    try { return JSON.parse(atob(code.replace(/-/g, '+').replace(/_/g, '/'))); } catch (err) { return null; }
+  }
+  function loadPlan(plan) {
+    // plan: [{type, count, delay, route: [[x, y], ...]}], the format ai/export_plan.py writes
+    barrage.salvos = plan.filter(s => MUNITIONS[s.type] && Array.isArray(s.route) && s.route.length).map(s => ({
+      type: s.type, count: Math.max(1, s.count | 0), delay: Math.max(0, +s.delay || 0),
+      route: s.route.map(([x, y]) => MUNITIONS[s.type].sea ? toWater(+x, +y) : { x: +x, y: +y }),
+      fired: 0, hits: 0, lost: 0, redirected: false,
+    }));
+    barrage.tool = null; barrage.draft = [];
+    renderBarrage();
+  }
+
   setupSandbox();
+  if (new URLSearchParams(location.search).has('plan')) {
+    menuEl.hidden = true;
+    setupBarrage(false);   // first, so sea-drone waypoints snap to this map's coastline
+    const linked = planFromLink();
+    if (!linked) noteMode('That plan link could not be read.');
+    else {
+      loadPlan(linked);
+      // &play: show the plan for a moment, then launch it at 2x
+      if (new URLSearchParams(location.search).has('play')) { noteMode('AI plan loaded. Launching…'); setTimeout(() => { barrage.speed = 2; launchBarrage(); }, 2500); }
+      else noteMode('Plan loaded from link. Press Space to launch.');
+    }
+  }
   requestAnimationFrame(frame);
 })();
 </script>

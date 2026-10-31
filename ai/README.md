@@ -20,6 +20,7 @@ pip install -r requirements.txt
 | `env.py` | Gymnasium environment. One episode = one plan = one strike. **`reward()` lives here**: it's the main thing to experiment with. |
 | `optimize.py` | Genetic algorithm baseline. No neural network: random plans that evolve. The score to beat. |
 | `train.py` | Trains the neural network with PPO (Stable-Baselines3) and saves `models/barrage_policy.zip`. |
+| `export_plan.py` | Opens the real game in your browser with the model's plan loaded, and flies it. |
 
 ## Run it
 
@@ -29,7 +30,10 @@ python optimize.py       # baseline, ~1 minute
 python train.py          # neural network, ~60k strikes; a few minutes on 4 cores
 python train.py 300000   # train longer
 tensorboard --logdir runs   # watch the reward curve (in another terminal)
+python export_plan.py    # watch the trained model's plan play out in the game
 ```
+
+`export_plan.py --js` prints the plan as JSON. Paste it over `AI_PLAN` in `../index.html` to update the **Load the AI's plan** button in the game's Barrage planner.
 
 ## How it fits together
 

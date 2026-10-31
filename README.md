@@ -15,6 +15,7 @@ New here? Start with the [Quickstart](QUICKSTART.md).
   - **Defenses:** two SAM sites with 8 missiles each, a radar that cues them (without it they see less, especially low cruise missiles), gun teams, interceptor drones, GPS jamming that makes Shaheds and decoys drift off course, a patrol boat, and a frigate with its own missiles and gun.
   - **Planning:** press 1–4 (or click a munition), click waypoints from the launch site, then right-click the target. In the panel you can set each salvo's size and launch time, then press **Space** to launch.
   - **In flight:** you can only watch at 1×, 2× or 4× speed, except that each Shahed salvo can be redirected once over its satellite link.
+  - **The AI's plan:** the **Load the AI's plan** button fills the planner with the best plan found by the neural network in [`ai/`](ai/README.md).
   - **Results:** the end card shows what got through, what shot your munitions down, and the cost exchange (your munitions against the enemy's interceptor spend). **Retry** keeps your plan so you can refine it.
 
 The **Menu** button in the top bar switches modes.
