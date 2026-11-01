@@ -2342,7 +2342,8 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   const siteKind = p => p === sites.ship ? 'ship' : p === sites.mother ? 'mother' : 'truck';
   function siteProblem(p, x, y) {
     const kind = siteKind(p), water = y > coastY(x) + 30, land = y < coastY(x) - 20;
-    if (x < -980 || x > 900 || y < -520 || y > 640) return 'off the map';
+    // trucks stay on the mapped coastline; ships can sail far out to sea (up to ~200 km offshore)
+    if (kind === 'truck' ? (x < -980 || x > 900 || y < -520) : (x < -2000 || x > 1400 || y > 2000)) return 'off the map';
     if (kind === 'truck' && !land) return 'trucks need to be on land';
     if (kind !== 'truck' && !water) return 'ships need open water';
     for (const [k, r, what] of STANDOFF[kind]) {
