@@ -129,6 +129,9 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
 #barrage .ais button b { color: var(--track); font-weight: 600; }
 #barrage .ais small { display: block; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
 #barrage .speeds { display: flex; gap: 4px; margin-bottom: 8px; }
+#barrage .intel { display: flex; justify-content: space-between; align-items: center; gap: 6px; margin: 0 0 8px; color: var(--ink-dim); font-size: 11px; }
+#barrage .intel button { padding: 2px 7px; font-size: 11px; }
+#barrage .intel button.on { border-color: var(--patrol); color: var(--patrol); }
 #barrage .speeds button.on { border-color: var(--sel); color: var(--sel); }
 .label { font: 600 10px var(--font-display); letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-dim); margin-bottom: 6px; }
 
@@ -460,6 +463,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   function pickTarget(wx, wy) {
     let best = null, bd = 14 / Math.min(cam.z, 1.5);
     for (const t of targets) {
+      if (gameMode === 'barrage' && !seen(t)) continue;  // can't aim at what you haven't found
       const dist = Math.hypot(t.x - wx, t.y - wy);
       if (dist < bd) { bd = dist; best = t; }
     }
@@ -932,6 +936,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     ctx.fillText('ENEMY BASE', 78, -326);
   }
   function drawPad() {
+    if (gameMode === 'barrage') { drawBarrageSites(); return; }
     const p = mission.pad;
     ctx.font = `600 ${11 / Math.min(cam.z, 1.4)}px "IBM Plex Mono", monospace`;
     ctx.strokeStyle = COL.sel; ctx.globalAlpha = 0.6; ctx.lineWidth = 1.5 / cam.z;
@@ -946,6 +951,23 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     ctx.strokeRect(q.x - 34, q.y - 34, 68, 68);
     ctx.setLineDash([]); ctx.globalAlpha = 1; ctx.fillStyle = '#7db4d7';
     ctx.fillText(gameMode === 'barrage' ? 'SEA LAUNCH' : isMission() ? `SEA DOCK · ${mission.seaReserve} IN RESERVE` : 'SEA DOCK · REFUEL', q.x, q.y + 50);
+  }
+
+  function drawBarrageSites() {
+    ctx.font = `600 ${11 / Math.min(cam.z, 1.4)}px "IBM Plex Mono", monospace`; ctx.textAlign = 'center';
+    const site = (p, color, dashed, what) => {
+      ctx.strokeStyle = color; ctx.globalAlpha = 0.7; ctx.lineWidth = 1.5 / cam.z;
+      if (dashed) ctx.setLineDash([6 / cam.z, 4 / cam.z]);
+      ctx.strokeRect(p.x - 26, p.y - 26, 52, 52); ctx.setLineDash([]);
+      ctx.globalAlpha = 1; ctx.fillStyle = color;
+      ctx.fillText(p.name, p.x, p.y + 26 + 14 / Math.min(cam.z, 1.4));
+      ctx.globalAlpha = 0.6; ctx.font = `${9.5 / Math.min(cam.z, 1.4)}px "IBM Plex Mono", monospace`;
+      ctx.fillText(what, p.x, p.y + 26 + 27 / Math.min(cam.z, 1.4));
+      ctx.font = `600 ${11 / Math.min(cam.z, 1.4)}px "IBM Plex Mono", monospace`; ctx.globalAlpha = 1;
+    };
+    for (const t of BARRAGE_SITES.trucks) site(t, COL.sel, false, 'Shaheds · decoys');
+    site(BARRAGE_SITES.ship, MUNITIONS.cruise.color, true, 'cruise missiles');
+    site(BARRAGE_SITES.mother, '#7db4d7', true, 'sea drones');
   }
 
   function drawZones() {
@@ -1099,7 +1121,19 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     drawPad();
     drawZones();
     drawPaths();
-    for (const t of targets) drawTarget(t);
+    for (const t of targets) {
+      if (seen(t)) { drawTarget(t); continue; }
+      if (!barrage.god) continue;
+      // god view: what's really there, ghosted so it's clear the planner can't see it
+      ctx.save(); ctx.globalAlpha = 0.35; drawTarget(t); ctx.restore();
+    }
+    if (gameMode === 'barrage') {
+      // where datalinked munitions dropped off the link
+      ctx.strokeStyle = COL.dim; ctx.lineWidth = 1.2 / cam.z; ctx.globalAlpha = 0.7;
+      ctx.beginPath();
+      for (const l of barrage.losses) { ctx.moveTo(l.x - 3, l.y - 3); ctx.lineTo(l.x + 3, l.y + 3); ctx.moveTo(l.x + 3, l.y - 3); ctx.lineTo(l.x - 3, l.y + 3); }
+      ctx.stroke(); ctx.globalAlpha = 1;
+    }
     ctx.font = `600 ${12 / cam.z}px "IBM Plex Mono", monospace`;
     ctx.textAlign = 'center';
     for (const f of floaters) {
@@ -2242,10 +2276,19 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     radar: { cover: 600, coverLow: 280 },
   };
   const barrage = { phase: 'plan', budget: 2000, by: {}, salvos: [], tool: null, draft: [], clock: 0, munitions: [], missiles: [], speed: 1, redirect: null,
+    site: 0, god: false, losses: [],
     enemySpend: 0, samShots: 0, intercepted: 0, impacts: 0, endTimer: 0 };
   const barrageEl = document.getElementById('barrage'), hudEl = document.querySelector('footer.hud');
   const spent = () => barrage.salvos.reduce((v, s) => v + s.count * MUNITIONS[s.type].cost, 0);
-  const startOf = type => MUNITIONS[type].sea ? mission.dock : mission.pad;
+  // where each weapon launches from: Shaheds and decoys from truck launchers at either of two inland sites,
+  // cruise missiles from a ship far offshore, sea drones from a mothership (keep in step with ai/sim.py)
+  const BARRAGE_SITES = {
+    trucks: [{ x: -880, y: -40, name: 'TRUCK SITE A' }, { x: -760, y: -400, name: 'TRUCK SITE B' }],
+    ship: { x: -800, y: 520, name: 'MISSILE SHIP' },
+    mother: { x: -480, y: 470, name: 'MOTHERSHIP' },
+  };
+  const startOf = (type, site = 0) => gameMode !== 'barrage' ? (MUNITIONS[type].sea ? mission.dock : mission.pad)
+    : type === 'cruise' ? BARRAGE_SITES.ship : MUNITIONS[type].sea ? BARRAGE_SITES.mother : BARRAGE_SITES.trucks[site] || BARRAGE_SITES.trucks[0];
   const usd = v => v >= 1e6 ? `$${(v / 1e6).toFixed(v >= 1e7 ? 0 : 1)}M` : `$${Math.round(v / 1e3)}k`;
 
   function setupBarrage(keepPlan) {
@@ -2255,7 +2298,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     Object.assign(mission, { name: 'Barrage', setup: () => setupBarrage(true), objectives: ['plant', 'substation', 'fuel', 'port', 'cp'], over: false,
       pad: { x: -880, y: -40 }, dock: { x: -860, y: 380 }, coast: { y: 170, ph: 1.1 } });
     Object.assign(barrage, { phase: 'plan', salvos: plan, tool: null, draft: [], clock: 0, munitions: [], missiles: [], speed: 1, redirect: null,
-      enemySpend: 0, samShots: 0, intercepted: 0, impacts: 0, endTimer: 0, by: {} });
+      enemySpend: 0, samShots: 0, intercepted: 0, impacts: 0, endTimer: 0, by: {}, losses: [] });
     // the defended city, laid out as a layered air defense (keep in step with build_city in ai/sim.py):
     // two SAM sites that cover each other and every inland objective, the radar between them, gun teams
     // on the SAM sites and high-value assets, interceptor drones forward on the west and north approaches,
@@ -2270,22 +2313,29 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     // scale: 1 px = 100 m, time runs ~100x; ranges below are in px (see BARRAGE_RANGES)
     Object.assign(spawnTarget(520, -180, 'radar'), BARRAGE_RANGES.radar);
     spawnTarget(300, 160, 'coastal_radar');
+    // Mobile units (short-range SAMs, mobile gun groups, interceptor teams) shift up to ~4 km between strikes,
+    // and pre-strike reconnaissance has only found about half of them. Fixed sites are known from imagery.
+    const mobile = (t, extra) => {
+      const a = Math.random() * 6.283, r = Math.sqrt(Math.random()) * 40;
+      t.x += Math.cos(a) * r; t.y += Math.sin(a) * r; t.home = { x: t.x, y: t.y };
+      return Object.assign(t, extra, { mobile: true, known: Math.random() < 0.5 });
+    };
     // medium-range SAM batteries (several launchers, deeper magazines) and short-range systems in the gaps
     for (const [x, y] of [[430, -100], [630, -200]]) Object.assign(spawnTarget(x, y, 'sam'), BARRAGE_RANGES.sam, { ammo: 12 });
-    for (const [x, y] of [[410, 100], [700, -60]]) Object.assign(spawnTarget(x, y, 'shorad'), BARRAGE_RANGES.shorad, { ammo: 6 });
+    for (const [x, y] of [[410, 100], [700, -60]]) mobile(spawnTarget(x, y, 'shorad'), { ...BARRAGE_RANGES.shorad, ammo: 6 });
     // gun teams on the SAM sites and command post, plus mobile fire groups out on the approach axes
-    for (const [x, y] of [[450, -80], [650, -180], [540, -305], [680, -40], [300, -140], [260, 95], [410, -350], [440, 120]])
-      Object.assign(spawnTarget(x, y, 'gun'), BARRAGE_RANGES.gun);
+    for (const [x, y] of [[450, -80], [650, -180], [540, -305], [680, -40]]) Object.assign(spawnTarget(x, y, 'gun'), BARRAGE_RANGES.gun);
+    for (const [x, y] of [[300, -140], [260, 95], [410, -350], [440, 120]]) mobile(spawnTarget(x, y, 'gun'), BARRAGE_RANGES.gun);
     // interceptor drone teams: forward screens west and north, plus two close-in teams
-    for (const [x, y] of [[230, -60], [470, -420], [340, -260], [600, -40]]) Object.assign(spawnTarget(x, y, 'interceptor'), BARRAGE_RANGES.interceptor);
+    for (const [x, y] of [[230, -60], [470, -420], [340, -260], [600, -40]]) mobile(spawnTarget(x, y, 'interceptor'), BARRAGE_RANGES.interceptor);
     const fr = Object.assign(spawnTarget(380, 320, 'frigate'), BARRAGE_RANGES.frigate); fr.ammo = 8; fr.wp = { x: 580, y: 320 }; fr.dir = 0;
     const b = Object.assign(spawnTarget(60, 330, 'boat'), BARRAGE_RANGES.boat); b.wp = { x: -160, y: 330 };
     zones.push({ x: 520, y: -110, r: 150 });
     hudEl.hidden = true; helpEl.hidden = true; missionEl.hidden = true; barrageEl.hidden = false;
     const left = 16, right = W - 310, top = 50, bottom = H - 16;
-    cam.z = clamp(Math.min((right - left) / 1740, (bottom - top) / 860), 0.3, 1);
-    cam.x = -60 - ((left + right) / 2 - W / 2) / cam.z;
-    cam.y = -20 - ((top + bottom) / 2 - H / 2) / cam.z;
+    cam.z = clamp(Math.min((right - left) / 1760, (bottom - top) / 1060), 0.3, 1);
+    cam.x = -70 - ((left + right) / 2 - W / 2) / cam.z;
+    cam.y = 60 - ((top + bottom) / 2 - H / 2) / cam.z;
     renderBarrage(); renderStatus(); renderTally();
   }
 
@@ -2327,7 +2377,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     if (button !== 2) return;
     const room = Math.floor((barrage.budget - spent()) / M.cost);
     if (room < 1) { noteMode('Not enough budget left for that munition.'); return; }
-    barrage.salvos.push({ type, count: Math.min(M.count, room), delay: 0, route: [...barrage.draft, p], fired: 0, hits: 0, lost: 0, redirected: false });
+    barrage.salvos.push({ type, count: Math.min(M.count, room), delay: 0, route: [...barrage.draft, p], site: M.slow ? barrage.site : 0, fired: 0, hits: 0, lost: 0, redirected: false });
     barrage.draft = [];
     barrage.tool = null;
     noteMode('');
@@ -2335,6 +2385,8 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   }
   function barrageKey(c) {
     if (TOOL_KEYS[c]) { setTool(TOOL_KEYS[c]); return true; }
+    if (c === 'KeyG') { barrage.god = !barrage.god; renderBarrage(); return true; }
+    if (c === 'KeyT' && barrage.phase === 'plan') { barrage.site = barrage.site ? 0 : 1; barrage.draft = []; noteMode(`New Shahed and decoy salvos launch from ${BARRAGE_SITES.trucks[barrage.site].name.toLowerCase()}.`); renderBarrage(); return true; }
     if (c === 'Escape') { barrage.tool = null; barrage.draft = []; barrage.redirect = null; barrage.pickAlt = null; noteMode(''); renderBarrage(); return true; }
     if (c === 'Backspace' && barrage.draft.length) { barrage.draft.pop(); return true; }
     if (c === 'Space' || c === 'Enter') { if (barrage.phase === 'plan') launchBarrage(); return true; }
@@ -2377,7 +2429,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   }
 
   function fire(s, k) {
-    const M = MUNITIONS[s.type], start = startOf(s.type);
+    const M = MUNITIONS[s.type], start = startOf(s.type, s.site);
     // each unit flies the salvo's route with a small sideways offset so salvos read as streams
     const off = (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 6;
     const route = s.route.map((p, i) => i === s.route.length - 1 ? p : { x: p.x, y: p.y + off });
@@ -2406,8 +2458,17 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       for (let k = 1; k < 3; k++) pings.push({ x: best.x, y: best.y, t: -k * 0.08, color: COL.danger });
     }
   }
+  // A hidden defense gives itself away when it fires: launch flashes and tracer show up on surveillance,
+  // and a datalinked drone that drops off the link marks roughly where it was shot down.
+  function reveal(t) {
+    if (!t.mobile || t.known || t.revealed) return;
+    t.revealed = true;
+    floaters.push({ x: t.x, y: t.y - 18, t: 0, text: 'SPOTTED', color: COL.patrol });
+  }
+  const seen = t => gameMode !== 'barrage' || !t.mobile || t.known || t.revealed;
   function downMunition(m, text, by) {
     m.dead = true; m.salvo.lost++; barrage.intercepted++;
+    barrage.losses.push({ x: m.x, y: m.y });
     barrage.by[by] = (barrage.by[by] || 0) + 1;
     floaters.push({ x: m.x, y: m.y - 14, t: 0, text, color: COL.danger });
   }
@@ -2499,7 +2560,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
         if (d < (MUNITIONS[m.type].low ? t.ownLow : t.own) || tracked(m)) { bd = d; b = m; }
       }
       if (!b) return;
-      t.cs = SAM_RELOAD; t.ammo--; b.engaged++;
+      t.cs = SAM_RELOAD; t.ammo--; b.engaged++; reveal(t);
       barrage.samShots++; barrage.enemySpend += t.kind === 'sam' ? SAM_USD : t.kind === 'shorad' ? SHORAD_USD : SHIP_SAM_USD;
       barrage.missiles.push({ x: t.x, y: t.y, tx: b.x, ty: b.y, target: b, trail: [] });
       return;
@@ -2509,7 +2570,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       if (t.cd > 0) return;
       const m = nearest(air, t.range);
       if (!m) return;
-      t.cd = 0.5; shots.push({ x0: t.x, y0: t.y, x1: m.x, y1: m.y, t: 0 });
+      t.cd = 0.5; shots.push({ x0: t.x, y0: t.y, x1: m.x, y1: m.y, t: 0 }); reveal(t);
       if (Math.random() < (MUNITIONS[m.type].low ? GUN_PK * 0.3 : GUN_PK)) downMunition(m, 'SHOT DOWN', 'guns');
       return;
     }
@@ -2529,7 +2590,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       t.x += t.vx * dt; t.y += t.vy * dt;
       if (Math.hypot(t.vx, t.vy) > 5) t.dir = Math.atan2(t.vy, t.vx);
       if (t.prey && dist < 8 && t.cd <= 0) {
-        t.cd = 1.5; barrage.enemySpend += INTERCEPTOR_USD;
+        t.cd = 1.5; barrage.enemySpend += INTERCEPTOR_USD; reveal(t);
         if (Math.random() < 0.65) { downMunition(t.prey, 'INTERCEPTED', 'interceptor drones'); t.prey = null; }
       }
     }
@@ -2555,8 +2616,8 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       ctx.beginPath(); ctx.arc(m.x, m.y, 9, 0, 7); ctx.stroke();
     }
   }
-  function drawRoute(type, pts, alpha, label) {
-    const M = MUNITIONS[type], s = startOf(type);
+  function drawRoute(type, pts, alpha, label, site = 0) {
+    const M = MUNITIONS[type], s = startOf(type, site);
     ctx.strokeStyle = M.color; ctx.globalAlpha = alpha; ctx.lineWidth = 1.4 / cam.z;
     ctx.setLineDash([6 / cam.z, 5 / cam.z]);
     ctx.beginPath(); ctx.moveTo(s.x, s.y);
@@ -2575,13 +2636,13 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   }
   function drawBarrage() {
     if (barrage.phase === 'plan') {
-      barrage.salvos.forEach((s, i) => drawRoute(s.type, s.route, 0.75, `${i + 1} · ${s.count}× T+${s.delay}s`));
+      barrage.salvos.forEach((s, i) => drawRoute(s.type, s.route, 0.75, `${i + 1} · ${s.count}× T+${s.delay}s`, s.site));
       if (barrage.tool) {
         const c = mouse.inside ? toWorld(mouse.x, mouse.y) : null;
-        drawRoute(barrage.tool, c ? [...barrage.draft, MUNITIONS[barrage.tool].sea ? toWater(c.x, c.y) : c] : barrage.draft, 0.5, '');
+        drawRoute(barrage.tool, c ? [...barrage.draft, MUNITIONS[barrage.tool].sea ? toWater(c.x, c.y) : c] : barrage.draft, 0.5, '', barrage.site);
       }
     } else {
-      for (const s of barrage.salvos) if (s.fired < s.count) drawRoute(s.type, s.route, 0.25, '');
+      for (const s of barrage.salvos) if (s.fired < s.count) drawRoute(s.type, s.route, 0.25, '', s.site);
     }
     for (const ms of barrage.missiles) {
       ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1.2 / cam.z;
@@ -2595,9 +2656,11 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     if (gameMode !== 'barrage') return;
     const used = spent(), plan = barrage.phase === 'plan';
     let html = `<h2>${plan ? 'Plan the barrage' : 'Barrage in flight'} <span>${plan ? `${usd(used * 1e3)} / ${usd(barrage.budget * 1e3)}` : `T+${Math.floor(barrage.clock)}s`}</span></h2>`;
+    const hidden = targets.filter(t => !t.dead && !seen(t)).length;
+    html += `<div class="intel"><span>${hidden ? `${hidden} mobile defenses unlocated` : 'All known defenses located'}</span><button data-act="god" class="${barrage.god ? 'on' : ''}" title="Show everything, including defenses your side hasn't found (G)">God view <kbd>G</kbd></button></div>`;
     if (plan) {
       html += `<div class="budget"><i style="width:${Math.min(100, used / barrage.budget * 100)}%"></i></div>`;
-      html += `<p>Pick a munition, click waypoints from the launch site, then right-click the target. Once launched, salvos fly their route on their own.</p><div class="tools">`;
+      html += `<p>Pick a munition, click waypoints from its launch site, then right-click the target. Drag to pan. <kbd>T</kbd> switches truck site. Once launched, salvos fly their route on their own.</p><div class="tools">`;
       Object.entries(MUNITIONS).forEach(([type, M], i) => {
         html += `<button data-tool="${type}" class="${barrage.tool === type ? 'on' : ''}"><kbd>${i + 1}</kbd> <span style="color:${M.color}">${M.name}</span><small>${usd(M.usd)} · ${M.note}</small></button>`;
       });
@@ -2612,6 +2675,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       html += `<li><i style="background:${M.color}"></i><div><div class="row"><b>${i + 1}.</b> ${s.count}× ${M.name}</div>`;
       if (plan) {
         html += `<div class="row meta">count <button data-act="cnt-" data-i="${i}">−</button><button data-act="cnt+" data-i="${i}">+</button> · launch T+${s.delay}s <button data-act="del-" data-i="${i}">−</button><button data-act="del+" data-i="${i}">+</button></div>`;
+        if (M.slow) html += `<div class="row meta">from <button data-act="site" data-i="${i}" title="Which truck launch site this salvo leaves from">${BARRAGE_SITES.trucks[s.site || 0].name.toLowerCase()}</button></div>`;
         if (M.damage) {
           const bt = s.alt && targetAt(s.alt, 30);
           html += `<div class="row meta">if target falls: <button data-act="alt" data-i="${i}" title="Where the rest of this salvo diverts if its target is destroyed before they arrive">${barrage.pickAlt === s ? 'pick on map…' : bt ? KINDS[bt.kind].name : 'nearest target'}</button></div>`;
@@ -2647,6 +2711,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     if (b.dataset.tool) { setTool(b.dataset.tool); return; }
     if (b.dataset.speed) { barrage.speed = +b.dataset.speed; renderBarrage(); return; }
     if (b.id === 'bLaunch') { launchBarrage(); return; }
+    if (b.dataset.act === 'god') { barrage.god = !barrage.god; renderBarrage(); return; }
     if (b.dataset.ai) { const a = AI_PLANS[b.dataset.ai]; loadPlan(a.plan); noteMode(`${a.name}'s plan is loaded (${a.blurb.toLowerCase()}). Press Space to watch it fly.`); return; }
     const s = barrage.salvos[+b.dataset.i];
     if (!s) return;
@@ -2658,6 +2723,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       case 'del-': s.delay = Math.max(0, s.delay - 5); break;
       case 'rm': barrage.salvos.splice(+b.dataset.i, 1); break;
       case 'redirect': barrage.redirect = barrage.redirect === s ? null : s; noteMode(barrage.redirect ? 'Click a new target for this Shahed salvo.' : ''); break;
+      case 'site': s.site = s.site ? 0 : 1; break;
       case 'alt':
         if (barrage.pickAlt === s) { s.alt = null; barrage.pickAlt = null; noteMode('Backup target set to automatic.'); }
         else { barrage.pickAlt = s; barrage.tool = null; barrage.draft = []; noteMode('Click a backup target on the map. Click the button again for automatic.'); }
@@ -2707,7 +2773,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     barrage.salvos = plan.filter(s => MUNITIONS[s.type] && Array.isArray(s.route) && s.route.length).map(s => ({
       type: s.type, count: Math.max(1, s.count | 0), delay: Math.max(0, +s.delay || 0),
       route: s.route.map(([x, y]) => MUNITIONS[s.type].sea ? toWater(+x, +y) : { x: +x, y: +y }),
-      alt: Array.isArray(s.alt) ? { x: +s.alt[0], y: +s.alt[1] } : null,
+      alt: Array.isArray(s.alt) ? { x: +s.alt[0], y: +s.alt[1] } : null, site: s.site ? 1 : 0,
       fired: 0, hits: 0, lost: 0, redirected: false,
     }));
     // trim to the budget in order, the same way ai/sim.py does

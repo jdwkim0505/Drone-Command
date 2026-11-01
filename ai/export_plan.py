@@ -29,6 +29,8 @@ def plan_list(action):
     out = []
     for s in decode(action):
         d = dict(type=s["type"], count=s["count"], delay=s["delay"], route=[[round(x), round(y)] for x, y in s["route"]])
+        if s["site"]:
+            d["site"] = 1
         if s["alt"]:
             d["alt"] = [round(v) for v in s["alt"]]
         out.append(d)

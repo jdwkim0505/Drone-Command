@@ -75,8 +75,9 @@ DRONE_SPEED = 95.0
 INT_SPEED, INT_PK, INT_RELOAD = 85.0, 0.65, 1.5   # quadcopter interceptors, ~280 km/h
 SAM_USD, SHIP_SAM_USD, SHORAD_USD, INTERCEPTOR_USD = 3e6, 1.2e6, 4e5, 20e3
 
-PAD = (-880.0, -40.0)     # air launch site
-DOCK = (-860.0, 380.0)    # sea launch site
+TRUCKS = [(-880.0, -40.0), (-760.0, -400.0)]   # truck launch sites A and B (Shaheds, decoys)
+SHIP = (-800.0, 520.0)    # missile ship far offshore (cruise missiles)
+DOCK = (-480.0, 470.0)    # mothership (sea drones)
 JAM = (520.0, -110.0, 150.0)  # GPS jamming zone over the city core: x, y, radius
 COAST = (170.0, 1.1)
 
@@ -101,7 +102,7 @@ def plan_cost(plan):
 
 class Target:
     __slots__ = ("kind", "x", "y", "hp", "dead", "ammo", "cd", "cd2", "home", "wp", "to_wp", "dir",
-                 "vx", "vy", "ang", "prey")
+                 "vx", "vy", "ang", "prey", "mobile")
 
     def __init__(self, kind, x, y, rng):
         self.kind, self.x, self.y = kind, float(x), float(y)
@@ -111,6 +112,7 @@ class Target:
         self.vx = self.vy = 0.0
         self.ang = rng.random() * 6.3
         self.prey = None
+        self.mobile = False
 
 
 class Munition:
@@ -145,6 +147,14 @@ def build_city(rng):
     """
     t = []
     add = lambda kind, x, y: t.append(Target(kind, x, y, rng)) or t[-1]
+
+    def mobile(kind, x, y):
+        """Mobile units shift up to ~4 km between strikes, so a plan can't count on where they are."""
+        a, r = rng.random() * 6.283, math.sqrt(rng.random()) * 40
+        u = add(kind, x + math.cos(a) * r, y + math.sin(a) * r)
+        u.home, u.mobile = (u.x, u.y), True
+        return u
+
     add("plant", 620, -120)
     add("substation", 360, 40)
     add("fuel", 720, 30)
@@ -156,15 +166,16 @@ def build_city(rng):
     add("sam", 430, -100).ammo = 12
     add("sam", 630, -200).ammo = 12
     # short-range missile systems plugging the gaps: the substation/coast side and the plant/fuel side
-    add("shorad", 410, 100).ammo = 6
-    add("shorad", 700, -60).ammo = 6
+    mobile("shorad", 410, 100).ammo = 6
+    mobile("shorad", 700, -60).ammo = 6
     # gun teams: on each SAM site and the command post, plus mobile fire groups out on the approach axes
-    for x, y in [(450, -80), (650, -180), (540, -305), (680, -40),
-                 (300, -140), (260, 95), (410, -350), (440, 120)]:
+    for x, y in [(450, -80), (650, -180), (540, -305), (680, -40)]:
         add("gun", x, y)
+    for x, y in [(300, -140), (260, 95), (410, -350), (440, 120)]:
+        mobile("gun", x, y)
     # interceptor drone teams: forward screens on the west and north axes, plus two close-in teams
     for x, y in [(230, -60), (470, -420), (340, -260), (600, -40)]:
-        add("interceptor", x, y)
+        mobile("interceptor", x, y)
     fr = add("frigate", 380, 320)
     fr.ammo, fr.wp, fr.dir = 8, (580, 320), 0.0
     b = add("boat", 60, 330)
@@ -228,7 +239,8 @@ def simulate(plan, seed=0, budget=BUDGET):
 
     def fire(s):
         k = s["fired"]
-        start = DOCK if MUNITIONS[s["type"]]["sea"] else PAD
+        start = (SHIP if s["type"] == "cruise" else DOCK if MUNITIONS[s["type"]]["sea"]
+                 else TRUCKS[s.get("site", 0)])
         off = (1 if k % 2 else -1) * math.ceil(k / 2) * 6
         pts = [(float(x), float(y)) for x, y in s["route"]]
         if MUNITIONS[s["type"]]["sea"]:

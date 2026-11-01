@@ -17,12 +17,15 @@ from doctrines import DOCTRINES, general as reward   # noqa: F401  (reward kept 
 def observe():
     """What the network sees: every enemy unit as (kind id, x, y, hp, ammo), scaled to about -1..1.
 
-    On the fixed map this never changes, but it's the hook for later stages where defenses
-    move or vary from game to game.
+    Mobile units (short-range SAMs, mobile gun groups, interceptor teams) are left out: they move
+    every strike, so the network has to plan for defenses it can't see.
     """
     kinds = list(KINDS)
     feats = []
+    # only the fixed sites known from imagery: mobile units move every strike and may not be located
     for t in build_city(random.Random(0)):
+        if t.mobile:
+            continue
         feats += [kinds.index(t.kind) / len(kinds), t.x / 1000, t.y / 1000, t.hp / 4, (t.ammo or 0) / 8]
     feats.append(BUDGET / 4000)
     return np.array(feats, dtype=np.float32)
