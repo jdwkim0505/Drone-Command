@@ -30,12 +30,15 @@ BUDGET = 2000             # $2M, in thousands of dollars
 #   shahed  Shahed-136 class loitering munition: ~$35k, ~185 km/h, ~50 kg warhead, 5-round launcher racks
 #   decoy   foam-body decoy (Gerbera class): ~$10k, ~160 km/h, no warhead, flown mixed in with Shaheds
 #   cruise  subsonic land-attack cruise missile: ~$1.5M, ~850 km/h, ~450 kg warhead, fired in fours
+#   tomahawk  Tomahawk Block IV/V: ~$2M, ~880 km/h, ~450 kg warhead, GPS + terrain matching, so it barely
+#           drifts under jamming; launched from the missile ship like the cruise missiles
 #   usv     explosive sea drone (Magura class): ~$250k, ~42 knots top speed, ~300 kg warhead, packs of 3
 # `unit` is how many the AI adds per step of its count choice (a launcher rack for the cheap drones).
 MUNITIONS = {
     "shahed": dict(cost=35, usd=35e3, speed=55, damage=1, blast=12, gap=0.7, unit=4, slow=True, low=False, sea=False, drift=1.0),
     "decoy": dict(cost=10, usd=10e3, speed=48, damage=0, blast=0, gap=0.5, unit=4, slow=True, low=False, sea=False, drift=1.0),
     "cruise": dict(cost=1500, usd=1.5e6, speed=255, damage=3, blast=20, gap=1.2, unit=1, slow=False, low=True, sea=False, drift=0.15),
+    "tomahawk": dict(cost=2000, usd=2e6, speed=265, damage=3, blast=20, gap=1.2, unit=1, slow=False, low=True, sea=False, drift=0.05),
     "usv": dict(cost=250, usd=250e3, speed=23, damage=3, blast=20, gap=1.0, unit=1, slow=False, low=False, sea=True, drift=0.0),
 }
 TYPES = list(MUNITIONS)
@@ -244,7 +247,7 @@ def simulate(plan, seed=0, budget=BUDGET, sites=None):
 
     def fire(s):
         k = s["fired"]
-        start = (ship if s["type"] == "cruise" else dock if MUNITIONS[s["type"]]["sea"]
+        start = (ship if s["type"] in ("cruise", "tomahawk") else dock if MUNITIONS[s["type"]]["sea"]
                  else trucks[s.get("site", 0)])
         off = (1 if k % 2 else -1) * math.ceil(k / 2) * 6
         pts = [(float(x), float(y)) for x, y in s["route"]]

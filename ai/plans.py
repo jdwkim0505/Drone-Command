@@ -5,7 +5,7 @@ The network gets the same choices a player has in the planner (everything except
 A plan has up to SLOTS salvos. Each salvo is 7 small integers:
 
     [type, target, route, count, delay, backup, site]
-     type    0 = empty slot, 1 = shahed, 2 = decoy, 3 = cruise, 4 = usv
+     type    0 = empty slot, 1 = shahed, 2 = decoy, 3 = cruise, 4 = usv, 5 = tomahawk
      target  which point on the map to strike (see AIM_POINTS)
      route   which of 6 corridors to fly (see route())
      count   0..7  ->  1..8 units (a unit is 4 Shaheds or decoys, or 1 missile or sea drone)
@@ -26,7 +26,7 @@ from sim import DOCK, SHIP, TRUCKS, build_city, coast_y, MUNITIONS, TYPES
 SLOTS = 8
 AIM_ORDER = ["plant", "substation", "fuel", "port", "cp", "radar", "coastal_radar", "sam_west", "sam_east"]
 ROUTES = ["straight", "north arc", "over the sea", "dogleg", "far south", "east hook"]
-FIELDS = [5, len(AIM_ORDER), len(ROUTES), 8, 8, len(AIM_ORDER) + 1, 2]   # choices for each number in a salvo
+FIELDS = [len(TYPES) + 1, len(AIM_ORDER), len(ROUTES), 8, 8, len(AIM_ORDER) + 1, 2]   # choices for each number in a salvo
 N = len(FIELDS)
 
 # launch site positions the network can pick from; every one is legal under the planner's standoff rules
