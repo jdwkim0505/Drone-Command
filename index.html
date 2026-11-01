@@ -1121,11 +1121,19 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     drawPad();
     drawZones();
     drawPaths();
+    const tag = (t, text, color) => {
+      ctx.font = `${9.5 / Math.min(cam.z, 1.4)}px "IBM Plex Mono", monospace`; ctx.textAlign = 'center'; ctx.fillStyle = color;
+      ctx.fillText(text, t.x, t.y + 8 + 26 / Math.min(cam.z, 1.4));
+    };
     for (const t of targets) {
-      if (seen(t)) { drawTarget(t); continue; }
+      if (seen(t)) {
+        drawTarget(t);
+        continue;
+      }
       if (!barrage.god) continue;
       // god view: what's really there, ghosted so it's clear the planner can't see it
       ctx.save(); ctx.globalAlpha = 0.35; drawTarget(t); ctx.restore();
+      if (!t.dead) tag(t, '(not visible)', COL.patrol);
     }
     if (gameMode === 'barrage') {
       // where datalinked munitions dropped off the link
