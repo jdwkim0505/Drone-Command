@@ -32,7 +32,7 @@ def observe(seed):
             feats += [kinds.index(t.kind) / len(kinds), 0, 0, 0, 0, 0]
             continue
         feats += [kinds.index(t.kind) / len(kinds), t.x / 1000, t.y / 1000, t.hp / 4, (t.ammo or 0) / 16, 1]
-    feats.append(BUDGET / 4000)
+    feats.append(BUDGET / 60000)
     return np.array(feats, dtype=np.float32)
 
 

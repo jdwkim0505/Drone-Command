@@ -24,7 +24,7 @@ import random
 # ---------- rules (kept in step with index.html) ----------
 DT = 0.1                  # simulation step in seconds; the game uses its frame time (~0.016)
 MAX_TIME = 240.0          # safety cap on a single strike
-BUDGET = 2000             # $2M, in thousands of dollars
+BUDGET = 60000            # $60M, in thousands of dollars
 
 # Reference values (public, approximate) scaled to the map: 0.3 px/s per km/h, cost in $ thousands.
 #   shahed  Shahed-136 class loitering munition: ~$35k, ~185 km/h, ~50 kg warhead, 5-round launcher racks
