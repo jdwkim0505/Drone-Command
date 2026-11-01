@@ -993,7 +993,12 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   function drawInterceptor(t) {
     ctx.strokeStyle = COL.danger; ctx.globalAlpha = 0.3; ctx.lineWidth = 1 / cam.z;
     ctx.setLineDash([2 / cam.z, 4 / cam.z]);
-    ctx.beginPath(); ctx.arc(t.x, t.y, KINDS.interceptor.detect, 0, 7); ctx.stroke();
+    ctx.beginPath(); ctx.arc(t.x, t.y, t.detect ?? KINDS.interceptor.detect, 0, 7); ctx.stroke();
+    if (t.leash && gameMode === 'barrage') {
+      // how far from home it will chase: faint fixed ring around its base
+      ctx.globalAlpha = 0.14; ctx.setLineDash([6 / cam.z, 6 / cam.z]);
+      ctx.beginPath(); ctx.arc(t.home.x, t.home.y, t.leash, 0, 7); ctx.stroke();
+    }
     ctx.setLineDash([]); ctx.globalAlpha = 1;
     if (t.prey) {
       ctx.globalAlpha = 0.6; ctx.beginPath(); ctx.moveTo(t.x, t.y); ctx.lineTo(t.prey.x, t.prey.y); ctx.stroke(); ctx.globalAlpha = 1;
@@ -2220,14 +2225,17 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   //   sam: 30 km missile reach; its own launcher radar sees 15 km (7 km vs low cruise missiles), the network the rest
   //   frigate: 50 km naval SAM; mast radar 38 km (20 km vs sea-skimmers); 76 mm deck gun 11 km
   //   boat: 30 mm autocannon 5 km · gun: SHORAD gun team 4.5 km
-  //   interceptor: spots drones at 6 km on its own, flies out to 12 km, radar-cued anywhere inside that
+  //   interceptor: short-endurance quadcopter (~280 km/h): spots drones at 3 km with its camera, flies out at most 6 km,
+  //   radar-cued anywhere inside that
   //   radar: 60 km against drones, 28 km against low cruise missiles (the radar horizon)
+  //   speeds at this scale: SAM missiles ~Mach 3.5 (1.2 km/s), interceptor quadcopters ~280 km/h
+  const SAM_MISSILE_SPEED = 1200, SAM_RELOAD = 0.4;  // px/s; ~40 s between launches from one site
   const BARRAGE_RANGES = {
     sam: { range: 300, own: 150, ownLow: 70 },
     frigate: { range: 500, own: 380, ownLow: 200, gun: 110 },
     boat: { gun: 50 },
     gun: { range: 45 },
-    interceptor: { detect: 60, leash: 120 },
+    interceptor: { detect: 30, leash: 60, speed: 85 },
     radar: { cover: 600, coverLow: 280 },
   };
   const barrage = { phase: 'plan', budget: 2000, by: {}, salvos: [], tool: null, draft: [], clock: 0, munitions: [], missiles: [], speed: 1, redirect: null,
@@ -2410,8 +2418,8 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       if (M.damage && m.aim && m.aim.dead && !m.terminal) retarget(m);
       if (M.drift && !m.terminal && zoneAt(m.x, m.y)) {
         if (!m.jamNoted) { m.jamNoted = true; floaters.push({ x: m.x, y: m.y - 14, t: 0, text: 'GPS JAMMED', color: COL.patrol }); }
-        m.err.x = clamp(m.err.x + (Math.random() - 0.5) * 160 * dt * M.drift, -70, 70);
-        m.err.y = clamp(m.err.y + (Math.random() - 0.5) * 160 * dt * M.drift, -70, 70);
+        m.err.x = clamp(m.err.x + (Math.random() - 0.5) * 160 * dt * M.drift, -35, 35);
+        m.err.y = clamp(m.err.y + (Math.random() - 0.5) * 160 * dt * M.drift, -35, 35);
       }
       const p = m.route[m.i], last = m.i === m.route.length - 1;
       const gx = p.x + m.err.x, gy = p.y + m.err.y;
@@ -2434,7 +2442,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     for (const ms of barrage.missiles) {
       const m = ms.target;
       if (!m.dead) { ms.tx = m.x; ms.ty = m.y; }
-      const dx = ms.tx - ms.x, dy = ms.ty - ms.y, dist = Math.hypot(dx, dy), step = 300 * dt;
+      const dx = ms.tx - ms.x, dy = ms.ty - ms.y, dist = Math.hypot(dx, dy), step = SAM_MISSILE_SPEED * dt;
       ms.trail.push({ x: ms.x, y: ms.y }); if (ms.trail.length > 10) ms.trail.shift();
       if (dist > step + 4) { ms.x += dx / dist * step; ms.y += dy / dist * step; continue; }
       ms.done = true; m.engaged--;
@@ -2484,7 +2492,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
         if (d < (MUNITIONS[m.type].low ? t.ownLow : t.own) || tracked(m)) { bd = d; b = m; }
       }
       if (!b) return;
-      t.cs = 1.2; t.ammo--; b.engaged++;
+      t.cs = SAM_RELOAD; t.ammo--; b.engaged++;
       barrage.samShots++; barrage.enemySpend += t.kind === 'sam' ? SAM_USD : SHIP_SAM_USD;
       barrage.missiles.push({ x: t.x, y: t.y, tx: b.x, ty: b.y, target: b, trail: [] });
       return;
@@ -2508,7 +2516,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
         t.prey = nearest(pool, t.detect) || nearest(pool.filter(tracked), Infinity);
       }
       const g = t.prey || { x: t.home.x + Math.cos(t.ang += dt * 0.7) * 45, y: t.home.y + Math.sin(t.ang) * 45 };
-      const sp = t.prey ? INT_SPEED : SPEED * 0.6;
+      const sp = t.prey ? t.speed : SPEED * 0.6;
       const dx = g.x - t.x, dy = g.y - t.y, dist = Math.hypot(dx, dy) || 0.01;
       t.vx += ((dx / dist) * sp - t.vx) * 6 * dt; t.vy += ((dy / dist) * sp - t.vy) * 6 * dt;
       t.x += t.vx * dt; t.y += t.vy * dt;

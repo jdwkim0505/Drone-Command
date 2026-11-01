@@ -50,7 +50,7 @@ TYPES = list(MUNITIONS)
 #                radars let it engage anything they track out to full reach. gun = 76 mm deck gun (11 km)
 #   boat         30 mm autocannon (5 km)
 #   gun          SHORAD gun team (4.5 km)
-#   interceptor  drone interceptor: spots on its own at 6 km, flies out up to 12 km from home, and is cued
+#   interceptor  quadcopter interceptor: spots on its own at 3 km, flies out up to 6 km from home, and is cued
 #                onto anything a radar station tracks inside that leash
 #   radar        coverage 60 km against drones; against low cruise missiles only to the radar horizon (28 km)
 KINDS = {
@@ -59,18 +59,18 @@ KINDS = {
     "radar": dict(hp=1, hl=6, hw=6, cover=600, cover_low=280),
     "coastal_radar": dict(hp=1, hl=6, hw=6, cover=450, cover_low=320),   # watches the sea approach
     "sam": dict(hp=2, hl=7, hw=7, range=300, own=150, own_low=70), "gun": dict(hp=1, hl=4, hw=4, range=45),
-    "interceptor": dict(hp=1, hl=6, hw=6, detect=60, leash=120),
+    "interceptor": dict(hp=1, hl=6, hw=6, detect=30, leash=60),
     "frigate": dict(hp=4, hl=22, hw=5.5, range=500, own=380, own_low=200, gun=110, speed=9),
     "boat": dict(hp=1, hl=8, hw=2.6, gun=50, speed=28),
 }
 OBJECTIVES = ["plant", "substation", "fuel", "port", "cp"]
 
-SAM_RELOAD, SAM_SPEED = 1.2, 300.0
+SAM_RELOAD, SAM_SPEED = 0.4, 1200.0   # ~40 s between launches; missiles at ~Mach 3.5
 SAM_PK_SLOW, SAM_PK_LOW = 0.85, 0.7
 GUN_RELOAD, GUN_PK = 0.5, 0.12
 SHIP_GUN_RELOAD = 1.2
 DRONE_SPEED = 95.0
-INT_SPEED, INT_PK, INT_RELOAD = DRONE_SPEED * 1.35, 0.65, 1.5
+INT_SPEED, INT_PK, INT_RELOAD = 85.0, 0.65, 1.5   # quadcopter interceptors, ~280 km/h
 SAM_USD, SHIP_SAM_USD, INTERCEPTOR_USD = 3e6, 1.2e6, 20e3
 
 PAD = (-880.0, -40.0)     # air launch site
@@ -276,8 +276,8 @@ def simulate(plan, seed=0, budget=BUDGET):
             if M["damage"] and m.aim is not None and m.aim.dead and not m.terminal:
                 retarget(m)
             if M["drift"] and not m.terminal and math.hypot(m.x - jx, m.y - jy) < jr:
-                m.ex = max(-70, min(70, m.ex + (rng.random() - 0.5) * 160 * dt * M["drift"]))
-                m.ey = max(-70, min(70, m.ey + (rng.random() - 0.5) * 160 * dt * M["drift"]))
+                m.ex = max(-35, min(35, m.ex + (rng.random() - 0.5) * 160 * dt * M["drift"]))
+                m.ey = max(-35, min(35, m.ey + (rng.random() - 0.5) * 160 * dt * M["drift"]))
             px, py = m.route[m.i]
             gx, gy = px + m.ex, py + m.ey
             dx, dy = gx - m.x, gy - m.y
