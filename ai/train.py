@@ -20,14 +20,18 @@ from stable_baselines3.common.vec_env import SubprocVecEnv
 
 from doctrines import DOCTRINES
 from env import BarrageEnv
-from plans import decode, describe
+from plans import decode, decode_sites, describe
 from sim import simulate
 
 
 def evaluate(model, n=50):
-    obs = BarrageEnv().reset()[0]
-    action, _ = model.predict(obs, deterministic=True)   # its single best guess
-    results = [simulate(decode(action), 10_000 + s) for s in range(n)]
+    """Fresh strikes it never trained on: each with its own defense layout and recon picture."""
+    env, results, action = BarrageEnv(), [], None
+    for k in range(n):
+        obs = env.reset(options=dict(strike_seed=10_000 + k))[0]
+        a, _ = model.predict(obs, deterministic=True)     # its best plan for what it can see
+        results.append(simulate(decode(a), 10_000 + k, sites=decode_sites(a)))
+        action = action if action is not None else a
     return action, results
 
 

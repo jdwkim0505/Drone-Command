@@ -278,9 +278,13 @@ def simulate(plan, seed=0, budget=BUDGET, sites=None):
                 stats["kill_times"][best.kind] = round(clock, 1)
 
     def nearest(t, pool, r):
-        best, bd = None, r
+        """Closest live munition in pool within r of t (cheap box test first: this is the hot loop)."""
+        best, bd, tx, ty = None, r, t.x, t.y
         for m in pool:
-            d = math.hypot(m.x - t.x, m.y - t.y)
+            dx, dy = m.x - tx, m.y - ty
+            if m.dead or dx > bd or dx < -bd or dy > bd or dy < -bd:
+                continue
+            d = math.hypot(dx, dy)
             if d < bd:
                 best, bd = m, d
         return best
@@ -348,6 +352,7 @@ def simulate(plan, seed=0, budget=BUDGET, sites=None):
         # defenses
         live = [m for m in munitions if not m.dead]
         air = [m for m in live if not m.m["sea"]]
+        ship_prey = [m for m in live if m.m["sea"] or m.m["slow"]]
         radars = [t for t in targets if t.kind in ("radar", "coastal_radar") and not t.dead]
 
         def tracked(m):
@@ -371,7 +376,7 @@ def simulate(plan, seed=0, budget=BUDGET, sites=None):
                     t.y += math.sin(t.dir) * k["speed"] * dt
                 t.cd2 -= dt
                 if t.cd2 <= 0:
-                    m = nearest(t, [q for q in live if not q.dead and (q.m["sea"] or q.m["slow"])], k["gun"])
+                    m = nearest(t, ship_prey, k["gun"])
                     if m:
                         t.cd2 = SHIP_GUN_RELOAD
                         if rng.random() < (0.3 if m.m["sea"] else 0.2):
@@ -404,7 +409,7 @@ def simulate(plan, seed=0, budget=BUDGET, sites=None):
                 t.cd -= dt
                 if t.cd > 0:
                     continue
-                m = nearest(t, [q for q in air if not q.dead], k["range"])
+                m = nearest(t, air, k["range"])
                 if m:
                     t.cd = GUN_RELOAD
                     if rng.random() < (GUN_PK * 0.3 if m.m["low"] else GUN_PK):

@@ -19,7 +19,7 @@ from stable_baselines3 import PPO
 
 from doctrines import DOCTRINES
 from env import BarrageEnv
-from plans import decode, describe
+from plans import decode, decode_sites, describe
 from sim import simulate
 
 LIVE = "https://jdwkim0505.com/drone-command/"
@@ -41,9 +41,17 @@ def plan_json(action):
     return json.dumps(plan_list(action), separators=(",", ":"))
 
 
-def best_action(doctrine):
+def best_action(doctrine, strike_seed=0):
+    """The strategist's plan for one recon picture (the game bakes in the plan for strike 0)."""
     model = PPO.load(f"models/{doctrine}")
-    return model.predict(BarrageEnv().reset()[0], deterministic=True)[0]
+    obs = BarrageEnv().reset(options=dict(strike_seed=strike_seed))[0]
+    return model.predict(obs, deterministic=True)[0]
+
+
+def sites_json(action):
+    st = decode_sites(action)
+    r = lambda p: [round(p[0]), round(p[1])]
+    return dict(trucks=[r(p) for p in st["trucks"]], ship=r(st["ship"]), mother=r(st["mother"]))
 
 
 def all_js():
@@ -53,9 +61,10 @@ def all_js():
         if not os.path.exists(f"models/{d}.zip"):
             continue
         action = best_action(d)
-        rs = [simulate(decode(action), 10_000 + s) for s in range(50)]
+        # the same fixed plan flown against 50 different defense layouts, like replaying it in the game
+        rs = [simulate(decode(action), 10_000 + s, sites=decode_sites(action)) for s in range(50)]
         avg = lambda k: sum(r[k] for r in rs) / len(rs)
-        out[d] = dict(name=name, blurb=blurb, plan=plan_list(action), stats=dict(
+        out[d] = dict(name=name, blurb=blurb, plan=plan_list(action), sites=sites_json(action), stats=dict(
             objectives=round(avg("objectives_destroyed"), 2), cost=round(avg("cost_usd")),
             enemy=round(avg("enemy_spend")), launched=round(avg("launched")), lost=round(avg("intercepted"), 1),
             finish=round(sum(max(r["kill_times"].values(), default=0) for r in rs) / len(rs), 1)))
@@ -63,7 +72,8 @@ def all_js():
 
 
 def plan_link(action, live=False, play=True):
-    code = base64.urlsafe_b64encode(plan_json(action).encode()).decode().rstrip("=")
+    payload = json.dumps(dict(salvos=plan_list(action), sites=sites_json(action)), separators=(",", ":"))
+    code = base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")
     here = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "index.html"))
     base = LIVE if live else "file://" + here
     return f"{base}?plan={code}" + ("&play" if play else "")

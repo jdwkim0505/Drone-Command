@@ -2776,7 +2776,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     if (b.dataset.speed) { barrage.speed = +b.dataset.speed; renderBarrage(); return; }
     if (b.id === 'bLaunch') { launchBarrage(); return; }
     if (b.dataset.act === 'god') { barrage.god = !barrage.god; renderBarrage(); return; }
-    if (b.dataset.ai) { const a = AI_PLANS[b.dataset.ai]; loadPlan(a.plan); noteMode(`${a.name}'s plan is loaded (${a.blurb.toLowerCase()}). Press Space to watch it fly.`); return; }
+    if (b.dataset.ai) { const a = AI_PLANS[b.dataset.ai]; loadPlan(a.plan, a.sites); noteMode(`${a.name}'s plan is loaded (${a.blurb.toLowerCase()}). Press Space to watch it fly.`); return; }
     const s = barrage.salvos[+b.dataset.i];
     if (!s) return;
     const M = MUNITIONS[s.type];
@@ -2832,8 +2832,15 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     if (!code) return null;
     try { return JSON.parse(atob(code.replace(/-/g, '+').replace(/_/g, '/'))); } catch (err) { return null; }
   }
-  function loadPlan(plan) {
-    // plan: [{type, count, delay, route: [[x, y], ...]}], the format ai/export_plan.py writes
+  function loadPlan(plan, at) {
+    // plan: [{type, count, delay, route: [[x, y], ...], alt?, site?}], the format ai/export_plan.py writes,
+    // or {salvos, sites}; at / sites optionally move the launch sites too
+    if (plan && !Array.isArray(plan)) { at = plan.sites; plan = plan.salvos || []; }
+    if (at) {
+      const put = (p, q) => { if (Array.isArray(q)) { p.x = +q[0]; p.y = +q[1]; } };
+      (at.trucks || []).forEach((q, i) => sites.trucks[i] && put(sites.trucks[i], q));
+      put(sites.ship, at.ship); put(sites.mother, at.mother);
+    }
     barrage.salvos = plan.filter(s => MUNITIONS[s.type] && Array.isArray(s.route) && s.route.length).map(s => ({
       type: s.type, count: Math.max(1, s.count | 0), delay: Math.max(0, +s.delay || 0),
       route: s.route.map(([x, y]) => MUNITIONS[s.type].sea ? toWater(+x, +y) : { x: +x, y: +y }),

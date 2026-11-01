@@ -16,7 +16,7 @@ pip install -r requirements.txt
 | File | What it does |
 | --- | --- |
 | `sim.py` | Headless Barrage simulator: the fixed map from the game, same rules, no graphics. `simulate(plan, seed)` runs one strike in ~20 ms and returns what happened. Run it directly for a speed test. |
-| `plans.py` | Turns 48 integers (8 salvos × type, target, route, count, delay, backup target) into a plan. This is the network's "vocabulary". |
+| `plans.py` | Turns 60 integers into a plan: 8 salvos × (type, target, route, count, delay, backup target, truck site) plus where to put the 4 launch sites. The same choices a player has in the planner. This is the network's "vocabulary". |
 | `doctrines.py` | **One reward function per strategist.** Same network, same simulator; only what it's rewarded for changes. Add your own here. |
 | `env.py` | Gymnasium environment. One episode = one plan = one strike, scored by the chosen doctrine. |
 | `optimize.py` | Genetic algorithm baseline. No neural network: random plans that evolve. The score to beat. |
@@ -50,15 +50,14 @@ python export_plan.py blitz         # watch a strategist's plan play out in the 
 
 ## How it fits together
 
-1. The network sees the battlefield (`observe()` in `env.py`: every enemy unit's type, position, HP and ammo).
-2. It outputs 48 integers, which `plans.decode()` turns into up to 8 salvos, each with a backup target to divert to if its target falls first.
+1. The network sees the battlefield the way a player does without God view (`observe()` in `env.py`): fixed sites from imagery, plus the mobile defenses that recon happened to find this strike. Mobile units move every strike, so it has to plan around ones it can't see.
+2. It outputs 60 integers, which `plans.decode()` turns into up to 8 salvos (each with a backup target to divert to if its target falls first) and `plans.decode_sites()` turns into launch site positions.
 3. `sim.simulate()` plays the strike out with random dice rolls.
 4. The doctrine's reward scores it, and PPO nudges the network's ~211k weights toward plans that scored well.
 
 ## Ideas for next steps
 
 - **Invent a doctrine.** Write a new reward in `doctrines.py`, add it to `DOCTRINES`, train it. The AI optimizes exactly what you reward.
-- **Randomize the map** (stage 2): jitter defense positions and SAM ammo each episode in `build_city()`, so it has to learn strategy instead of memorizing one answer. This is where the network should start beating the genetic algorithm.
 - **More route options** in `plans.route()`, or let the network place waypoints directly.
 
 The simulator mirrors the rules in `../index.html`. If you change balance numbers in the game, change them in `sim.py` too.
