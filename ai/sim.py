@@ -183,8 +183,13 @@ def build_city(rng):
     return t
 
 
-def simulate(plan, seed=0, budget=BUDGET):
-    """Run one strike. Salvos past the budget are trimmed, in order."""
+def simulate(plan, seed=0, budget=BUDGET, sites=None):
+    """Run one strike. Salvos past the budget are trimmed, in order.
+
+    sites optionally moves the launch sites: {"trucks": [(x, y), (x, y)], "ship": (x, y), "mother": (x, y)}.
+    """
+    trucks = (sites or {}).get("trucks", TRUCKS)
+    ship, dock = (sites or {}).get("ship", SHIP), (sites or {}).get("mother", DOCK)
     rng = random.Random(seed)
     # trim to budget
     salvos, left = [], budget
@@ -239,8 +244,8 @@ def simulate(plan, seed=0, budget=BUDGET):
 
     def fire(s):
         k = s["fired"]
-        start = (SHIP if s["type"] == "cruise" else DOCK if MUNITIONS[s["type"]]["sea"]
-                 else TRUCKS[s.get("site", 0)])
+        start = (ship if s["type"] == "cruise" else dock if MUNITIONS[s["type"]]["sea"]
+                 else trucks[s.get("site", 0)])
         off = (1 if k % 2 else -1) * math.ceil(k / 2) * 6
         pts = [(float(x), float(y)) for x, y in s["route"]]
         if MUNITIONS[s["type"]]["sea"]:

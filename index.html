@@ -965,9 +965,21 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       ctx.fillText(what, p.x, p.y + 26 + 27 / Math.min(cam.z, 1.4));
       ctx.font = `600 ${11 / Math.min(cam.z, 1.4)}px "IBM Plex Mono", monospace`; ctx.globalAlpha = 1;
     };
-    for (const t of BARRAGE_SITES.trucks) site(t, COL.sel, false, 'Shaheds · decoys');
-    site(BARRAGE_SITES.ship, MUNITIONS.cruise.color, true, 'cruise missiles');
-    site(BARRAGE_SITES.mother, '#7db4d7', true, 'sea drones');
+    const d = barrage.dragSite;
+    if (d) {
+      // the standoff zones this site has to stay out of
+      for (const [k, r] of STANDOFF[siteKind(d.p)]) {
+        const t = targets.find(q => q.kind === k);
+        if (!t) continue;
+        ctx.fillStyle = 'rgba(248,113,113,0.06)'; ctx.strokeStyle = COL.danger; ctx.globalAlpha = 0.5; ctx.lineWidth = 1.2 / cam.z;
+        ctx.setLineDash([8 / cam.z, 6 / cam.z]);
+        ctx.beginPath(); ctx.arc(t.home?.x ?? t.x, t.home?.y ?? t.y, r, 0, 7); ctx.fill(); ctx.stroke();
+        ctx.setLineDash([]); ctx.globalAlpha = 1;
+      }
+    }
+    for (const t of sites.trucks) site(t, d && d.p === t && d.bad ? COL.danger : COL.sel, false, d && d.p === t && d.bad ? d.bad : 'Shaheds · decoys');
+    site(sites.ship, d && d.p === sites.ship && d.bad ? COL.danger : MUNITIONS.cruise.color, true, d && d.p === sites.ship && d.bad ? d.bad : 'cruise missiles');
+    site(sites.mother, d && d.p === sites.mother && d.bad ? COL.danger : '#7db4d7', true, d && d.p === sites.mother && d.bad ? d.bad : 'sea drones');
   }
 
   function drawZones() {
@@ -1220,7 +1232,14 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     if (e.button === 1) { pan = { sx: e.offsetX, sy: e.offsetY, cx: cam.x, cy: cam.y }; e.preventDefault(); return; }
     if (gameMode === 'barrage') {
       // left button: a click places a waypoint, a drag pans the map
-      if (e.button === 0) { bdrag = { sx: e.offsetX, sy: e.offsetY, cx: cam.x, cy: cam.y, moved: false }; return; }
+      if (e.button === 0) {
+        // while planning with no tool picked, grab a launch site to move it
+        if (barrage.phase === 'plan' && !barrage.tool && !barrage.pickAlt) {
+          const p = siteList().find(q => Math.abs(q.x - w.x) < 30 && Math.abs(q.y - w.y) < 30);
+          if (p) { barrage.dragSite = { p, ox: p.x, oy: p.y, dx: w.x - p.x, dy: w.y - p.y, bad: '' }; cvs.style.cursor = 'grabbing'; return; }
+        }
+        bdrag = { sx: e.offsetX, sy: e.offsetY, cx: cam.x, cy: cam.y, moved: false }; return;
+      }
       barrageClick(w, e.button); return;
     }
     if (e.button === 2) {
@@ -1244,6 +1263,12 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   cvs.addEventListener('pointermove', e => {
     mouse = { x: e.offsetX, y: e.offsetY, inside: true };
     if (pan) { cam.x = pan.cx - (e.offsetX - pan.sx) / cam.z; cam.y = pan.cy - (e.offsetY - pan.sy) / cam.z; return; }
+    if (gameMode === 'barrage' && barrage.dragSite) {
+      const d = barrage.dragSite, w = toWorld(e.offsetX, e.offsetY);
+      d.p.x = w.x - d.dx; d.p.y = w.y - d.dy;
+      d.bad = siteProblem(d.p, d.p.x, d.p.y);
+      return;
+    }
     if (bdrag) {
       if (Math.hypot(e.offsetX - bdrag.sx, e.offsetY - bdrag.sy) > 5) bdrag.moved = true;
       if (bdrag.moved) { cam.x = bdrag.cx - (e.offsetX - bdrag.sx) / cam.z; cam.y = bdrag.cy - (e.offsetY - bdrag.sy) / cam.z; cvs.style.cursor = 'grabbing'; }
@@ -1257,6 +1282,12 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   cvs.addEventListener('pointerleave', () => { mouse.inside = false; });
   cvs.addEventListener('pointerup', e => {
     if (pan) { pan = null; return; }
+    if (gameMode === 'barrage' && barrage.dragSite) {
+      const d = barrage.dragSite; barrage.dragSite = null; cvs.style.cursor = '';
+      if (d.bad) { d.p.x = d.ox; d.p.y = d.oy; noteMode(`Can't put ${d.p.name.toLowerCase()} there: ${d.bad}.`); }
+      else noteMode(`${d.p.name} moved.`);
+      return;
+    }
     if (bdrag) {
       const bd = bdrag; bdrag = null; cvs.style.cursor = '';
       if (!bd.moved) barrageClick(toWorld(bd.sx, bd.sy), 0);
@@ -2284,7 +2315,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     radar: { cover: 600, coverLow: 280 },
   };
   const barrage = { phase: 'plan', budget: 2000, by: {}, salvos: [], tool: null, draft: [], clock: 0, munitions: [], missiles: [], speed: 1, redirect: null,
-    site: 0, god: false, losses: [],
+    site: 0, god: false, losses: [], dragSite: null,
     enemySpend: 0, samShots: 0, intercepted: 0, impacts: 0, endTimer: 0 };
   const barrageEl = document.getElementById('barrage'), hudEl = document.querySelector('footer.hud');
   const spent = () => barrage.salvos.reduce((v, s) => v + s.count * MUNITIONS[s.type].cost, 0);
@@ -2295,8 +2326,32 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     ship: { x: -800, y: 520, name: 'MISSILE SHIP' },
     mother: { x: -480, y: 470, name: 'MOTHERSHIP' },
   };
+  // the player can move the sites while planning; this is where they are now
+  const sites = { trucks: BARRAGE_SITES.trucks.map(t => ({ ...t })), ship: { ...BARRAGE_SITES.ship }, mother: { ...BARRAGE_SITES.mother } };
+  const siteList = () => [...sites.trucks, sites.ship, sites.mother];
   const startOf = (type, site = 0) => gameMode !== 'barrage' ? (MUNITIONS[type].sea ? mission.dock : mission.pad)
-    : type === 'cruise' ? BARRAGE_SITES.ship : MUNITIONS[type].sea ? BARRAGE_SITES.mother : BARRAGE_SITES.trucks[site] || BARRAGE_SITES.trucks[0];
+    : type === 'cruise' ? sites.ship : MUNITIONS[type].sea ? sites.mother : sites.trucks[site] || sites.trucks[0];
+  // Standoff rules: launch from outside the defenders' picture. Trucks stay out of radar coverage (with a margin,
+  // since radar sees a launch and calls in a strike); ships stay out of the frigate's missile reach and the
+  // coastal radar; the mothership can push a little closer, since a sea drone launch is hard to see.
+  const STANDOFF = {
+    truck: [['radar', 700, 'main radar'], ['coastal_radar', 520, 'coastal radar']],
+    ship: [['frigate', 600, "frigate's missiles"], ['coastal_radar', 560, 'coastal radar']],
+    mother: [['frigate', 520, "frigate's missiles"], ['coastal_radar', 420, 'coastal radar']],
+  };
+  const siteKind = p => p === sites.ship ? 'ship' : p === sites.mother ? 'mother' : 'truck';
+  function siteProblem(p, x, y) {
+    const kind = siteKind(p), water = y > coastY(x) + 30, land = y < coastY(x) - 20;
+    if (x < -980 || x > 900 || y < -520 || y > 640) return 'off the map';
+    if (kind === 'truck' && !land) return 'trucks need to be on land';
+    if (kind !== 'truck' && !water) return 'ships need open water';
+    for (const [k, r, what] of STANDOFF[kind]) {
+      const t = targets.find(q => q.kind === k);
+      if (t && Math.hypot(x - (t.home?.x ?? t.x), y - (t.home?.y ?? t.y)) < r) return `too close: inside the ${what} standoff (${r / 10} km)`;
+    }
+    for (const q of siteList()) if (q !== p && Math.hypot(q.x - x, q.y - y) < 70) return 'too close to another site';
+    return '';
+  }
   const usd = v => v >= 1e6 ? `$${(v / 1e6).toFixed(v >= 1e7 ? 0 : 1)}M` : `$${Math.round(v / 1e3)}k`;
 
   function setupBarrage(keepPlan) {
@@ -2668,7 +2723,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     html += `<div class="intel"><span>${hidden ? `${hidden} mobile defenses unlocated` : 'All known defenses located'}</span><button data-act="god" class="${barrage.god ? 'on' : ''}" title="Show everything, including defenses your side hasn't found (G)">God view <kbd>G</kbd></button></div>`;
     if (plan) {
       html += `<div class="budget"><i style="width:${Math.min(100, used / barrage.budget * 100)}%"></i></div>`;
-      html += `<p>Pick a munition, click waypoints from its launch site, then right-click the target. Drag to pan. <kbd>T</kbd> switches truck site. Once launched, salvos fly their route on their own.</p><div class="tools">`;
+      html += `<p>Pick a munition, click waypoints from its launch site, then right-click the target. Drag to pan. <kbd>T</kbd> switches truck site. Drag a launch site to move it. Once launched, salvos fly their route on their own.</p><div class="tools">`;
       Object.entries(MUNITIONS).forEach(([type, M], i) => {
         html += `<button data-tool="${type}" class="${barrage.tool === type ? 'on' : ''}"><kbd>${i + 1}</kbd> <span style="color:${M.color}">${M.name}</span><small>${usd(M.usd)} · ${M.note}</small></button>`;
       });
