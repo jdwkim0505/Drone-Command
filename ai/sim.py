@@ -73,7 +73,7 @@ GUN_RELOAD, GUN_PK = 0.5, 0.12
 SHIP_GUN_RELOAD = 1.2
 DRONE_SPEED = 95.0
 INT_SPEED, INT_PK, INT_RELOAD = 85.0, 0.65, 1.5   # quadcopter interceptors, ~280 km/h
-SAM_USD, SHIP_SAM_USD, SHORAD_USD, INTERCEPTOR_USD = 3e6, 1.2e6, 4e5, 20e3
+SAM_USD, SHIP_SAM_USD, SHORAD_USD, INTERCEPTOR_USD, GUN_BURST_USD = 3e6, 1.8e6, 4e5, 5e3, 3e3
 
 TRUCKS = [(-880.0, -40.0), (-760.0, -400.0)]   # truck launch sites A and B (Shaheds, decoys)
 SHIP = (-800.0, 520.0)    # missile ship far offshore (cruise missiles)
@@ -412,6 +412,7 @@ def simulate(plan, seed=0, budget=BUDGET, sites=None):
                 m = nearest(t, air, k["range"])
                 if m:
                     t.cd = GUN_RELOAD
+                    stats["enemy_spend"] += GUN_BURST_USD
                     if rng.random() < (GUN_PK * 0.3 if m.m["low"] else GUN_PK):
                         down(m, "guns")
             elif t.kind == "interceptor":
