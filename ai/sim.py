@@ -35,11 +35,11 @@ BUDGET = 60000            # $60M, in thousands of dollars
 #   usv     explosive sea drone (Magura class): ~$250k, ~42 knots top speed, ~300 kg warhead, packs of 3
 # `unit` is how many the AI adds per step of its count choice (a launcher rack for the cheap drones).
 MUNITIONS = {
-    "shahed": dict(cost=35, usd=35e3, speed=55, damage=1, blast=12, gap=0.7, unit=4, slow=True, low=False, sea=False, drift=1.0),
-    "decoy": dict(cost=10, usd=10e3, speed=48, damage=0, blast=0, gap=0.5, unit=4, slow=True, low=False, sea=False, drift=1.0),
-    "cruise": dict(cost=1500, usd=1.5e6, speed=255, damage=3, blast=20, gap=1.2, unit=1, slow=False, low=True, sea=False, drift=0.15),
-    "tomahawk": dict(cost=2000, usd=2e6, speed=265, damage=3, blast=20, gap=1.2, unit=1, slow=False, low=True, sea=False, drift=0.05),
-    "usv": dict(cost=250, usd=250e3, speed=23, damage=3, blast=20, gap=1.0, unit=1, slow=False, low=False, sea=True, drift=0.0),
+    "shahed": dict(pk=0.85, cost=35, usd=35e3, speed=55, damage=1, blast=12, gap=0.7, unit=8, slow=True, low=False, sea=False, drift=1.0),
+    "decoy": dict(pk=0.85, cost=10, usd=10e3, speed=48, damage=0, blast=0, gap=0.5, unit=8, slow=True, low=False, sea=False, drift=1.0),
+    "cruise": dict(pk=0.5, cost=1500, usd=1.5e6, speed=255, damage=3, blast=20, gap=1.2, unit=2, slow=False, low=True, sea=False, drift=0.15),
+    "tomahawk": dict(pk=0.4, cost=2000, usd=2e6, speed=265, damage=3, blast=20, gap=1.2, unit=2, slow=False, low=True, sea=False, drift=0.05),
+    "usv": dict(pk=0.0, cost=250, usd=250e3, speed=23, damage=3, blast=20, gap=1.0, unit=1, slow=False, low=False, sea=True, drift=0.0),
 }
 TYPES = list(MUNITIONS)
 
@@ -71,7 +71,11 @@ KINDS = {
 OBJECTIVES = ["plant", "substation", "fuel", "port", "cp"]
 
 SAM_RELOAD, SAM_SPEED = 0.4, 1200.0   # ~40 s between launches; missiles at ~Mach 3.5
-SAM_PK_SLOW, SAM_PK_LOW = 0.85, 0.7
+# SAM kill chance per shot is per munition (pk above): slow drones are easy, a sea-skimming cruise missile
+# seen late is hard, and a terrain-hugging Tomahawk is harder still.
+# Fire discipline: long-range SAMs and the frigate save their missiles for cruise missiles and only fire on
+# slow drones that come within HOLD_FIRE of the launcher; guns, interceptor drones and SHORAD take the drones.
+HOLD_FIRE = 100
 GUN_RELOAD, GUN_PK = 0.5, 0.12
 SHIP_GUN_RELOAD = 1.2
 DRONE_SPEED = 95.0
@@ -348,7 +352,7 @@ def simulate(plan, seed=0, budget=BUDGET, sites=None):
                 continue
             ms["done"] = True
             m.engaged -= 1
-            if not m.dead and rng.random() < (SAM_PK_LOW if m.m["low"] else SAM_PK_SLOW):
+            if not m.dead and rng.random() < m.m["pk"]:
                 down(m, "SAMs")
         missiles = [ms for ms in missiles if not ms.get("done")]
 
@@ -396,6 +400,8 @@ def simulate(plan, seed=0, budget=BUDGET, sites=None):
                         continue
                     d = math.hypot(m.x - t.x, m.y - t.y)
                     if d >= r or d >= bd:
+                        continue
+                    if t.kind != "shorad" and m.m["slow"] and d > HOLD_FIRE:
                         continue
                     # its own radar sees it, or the network hands over a track
                     if d < (k["own_low"] if m.m["low"] else k["own"]) or tracked(m):

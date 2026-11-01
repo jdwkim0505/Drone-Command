@@ -19,12 +19,12 @@ def _damage(r):
 
 def general(r):
     """Destroy as much as possible. Cost barely matters."""
-    return 10 * r["objectives_destroyed"] + 2 * _damage(r) + 3 * r["radar_destroyed"] - 0.001 * r["cost_pts"]
+    return 10 * r["objectives_destroyed"] + 2 * _damage(r) + 3 * r["radar_destroyed"] - 0.00005 * r["cost_pts"]
 
 
 def economist(r):
-    """Results per dollar. Every $1M spent costs about as much as one objective is worth."""
-    return 10 * r["objectives_destroyed"] + 2 * _damage(r) - 0.012 * r["cost_pts"]
+    """Results per dollar. Every $5M spent costs about as much as one objective is worth."""
+    return 10 * r["objectives_destroyed"] + 2 * _damage(r) - 0.002 * r["cost_pts"]
 
 
 def blitz(r):

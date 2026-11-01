@@ -8,7 +8,7 @@ A plan has up to SLOTS salvos. Each salvo is 7 small integers:
      type    0 = empty slot, 1 = shahed, 2 = decoy, 3 = cruise, 4 = usv, 5 = tomahawk
      target  which point on the map to strike (see AIM_POINTS)
      route   which of 6 corridors to fly (see route())
-     count   0..7  ->  1..8 units (a unit is 4 Shaheds or decoys, or 1 missile or sea drone)
+     count   0..7  ->  1..8 units (a unit is 8 Shaheds or decoys, 2 missiles or 1 sea drone)
      delay   0..7  ->  launch at T+0, 5, ... 35 seconds
      backup  0 = automatic (nearest surviving objective), 1.. = divert to that AIM_POINT if the
              target falls before the salvo arrives
