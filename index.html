@@ -382,6 +382,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   let modeShiftUsed = false;
   let mouse = { x: 0, y: 0, inside: false };
   let drag = null, pan = null;
+  let bdrag = null;  // Barrage: left-button press that becomes a pan once it moves
   const keys = new Set();
   let lastGroupTap = { n: -1, t: 0 };
   let lastClick = { t: 0, id: 0 };
@@ -1169,7 +1170,11 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     cvs.setPointerCapture(e.pointerId);
     const w = toWorld(e.offsetX, e.offsetY);
     if (e.button === 1) { pan = { sx: e.offsetX, sy: e.offsetY, cx: cam.x, cy: cam.y }; e.preventDefault(); return; }
-    if (gameMode === 'barrage') { barrageClick(w, e.button); return; }
+    if (gameMode === 'barrage') {
+      // left button: a click places a waypoint, a drag pans the map
+      if (e.button === 0) { bdrag = { sx: e.offsetX, sy: e.offsetY, cx: cam.x, cy: cam.y, moved: false }; return; }
+      barrageClick(w, e.button); return;
+    }
     if (e.button === 2) {
       if (mode) { setMode(null); return; }
       const tgt = pickTarget(w.x, w.y);
@@ -1191,6 +1196,11 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   cvs.addEventListener('pointermove', e => {
     mouse = { x: e.offsetX, y: e.offsetY, inside: true };
     if (pan) { cam.x = pan.cx - (e.offsetX - pan.sx) / cam.z; cam.y = pan.cy - (e.offsetY - pan.sy) / cam.z; return; }
+    if (bdrag) {
+      if (Math.hypot(e.offsetX - bdrag.sx, e.offsetY - bdrag.sy) > 5) bdrag.moved = true;
+      if (bdrag.moved) { cam.x = bdrag.cx - (e.offsetX - bdrag.sx) / cam.z; cam.y = bdrag.cy - (e.offsetY - bdrag.sy) / cam.z; cvs.style.cursor = 'grabbing'; }
+      return;
+    }
     if (drag) {
       drag.ex = e.offsetX; drag.ey = e.offsetY;
       if (Math.hypot(drag.ex - drag.sx, drag.ey - drag.sy) > 5) drag.moved = true;
@@ -1199,6 +1209,11 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   cvs.addEventListener('pointerleave', () => { mouse.inside = false; });
   cvs.addEventListener('pointerup', e => {
     if (pan) { pan = null; return; }
+    if (bdrag) {
+      const bd = bdrag; bdrag = null; cvs.style.cursor = '';
+      if (!bd.moved) barrageClick(toWorld(bd.sx, bd.sy), 0);
+      return;
+    }
     if (!drag) return;
     const dg = drag; drag = null;
     if (dg.moved) {
@@ -2272,10 +2287,18 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       const s = barrage.redirect;
       if (!s) return;
       const t = pickTarget(w.x, w.y), p = t ? { x: t.x, y: t.y } : w;
-      for (const m of barrage.munitions) if (m.salvo === s) { m.route = [p]; m.i = 0; }
+      for (const m of barrage.munitions) if (m.salvo === s) { m.route = [p]; m.i = 0; m.terminal = false; m.aim = t && !t.dead ? t : null; }
       s.redirected = true; barrage.redirect = null;
       noteMode('New target sent over the satellite link.');
       pings.push({ x: p.x, y: p.y, t: 0, color: MUNITIONS.shahed.color });
+      renderBarrage();
+      return;
+    }
+    if (barrage.pickAlt) {
+      const t = pickTarget(w.x, w.y);
+      if (!t) { noteMode('Click a target to use as the backup.'); return; }
+      barrage.pickAlt.alt = { x: t.x, y: t.y }; barrage.pickAlt = null;
+      noteMode(`Backup target: ${KINDS[t.kind].name}.`);
       renderBarrage();
       return;
     }
@@ -2297,14 +2320,43 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   }
   function barrageKey(c) {
     if (TOOL_KEYS[c]) { setTool(TOOL_KEYS[c]); return true; }
-    if (c === 'Escape') { barrage.tool = null; barrage.draft = []; barrage.redirect = null; noteMode(''); renderBarrage(); return true; }
+    if (c === 'Escape') { barrage.tool = null; barrage.draft = []; barrage.redirect = null; barrage.pickAlt = null; noteMode(''); renderBarrage(); return true; }
     if (c === 'Backspace' && barrage.draft.length) { barrage.draft.pop(); return true; }
     if (c === 'Space' || c === 'Enter') { if (barrage.phase === 'plan') launchBarrage(); return true; }
     return false;
   }
+  // the live target nearest a point, within r (used to know what a salvo is aimed at)
+  function targetAt(p, r) {
+    let best = null, bd = r;
+    for (const t of targets) { if (t.dead) continue; const d = Math.hypot(t.x - p.x, t.y - p.y); if (d < bd) { bd = d; best = t; } }
+    return best;
+  }
+  // Datalinked munitions (satellite or mesh-radio Shaheds, retargetable cruise missiles, operator-steered sea
+  // drones) divert when their target is already destroyed: to the salvo's backup target if it still stands,
+  // otherwise to the nearest objective they can reach.
+  function retarget(m) {
+    const M = MUNITIONS[m.type], s = m.salvo;
+    const alt = s.alt && targetAt(s.alt, 30);
+    let next = alt && !alt.dead ? alt : null;
+    if (!next) {
+      let bd = Infinity;
+      for (const t of targets) {
+        if (t.dead || !mission.objectives.includes(t.kind)) continue;
+        if (M.sea && t.y < coastY(t.x) - 40) continue;  // sea drones can only reach things on the water's edge
+        const d = Math.hypot(t.x - m.x, t.y - m.y);
+        if (d < bd) { bd = d; next = t; }
+      }
+    }
+    if (!next) return;
+    m.aim = next;
+    const p = M.sea ? toWater(next.x, next.y) : { x: next.x, y: next.y };
+    m.route = [p]; m.i = 0; m.err = { x: 0, y: 0 };
+    floaters.push({ x: m.x, y: m.y - 14, t: 0, text: 'RETARGET', color: M.color });
+  }
   function launchBarrage() {
     if (!barrage.salvos.length) { noteMode('Plan at least one salvo first.'); return; }
-    barrage.phase = 'flight'; barrage.tool = null; barrage.draft = [];
+    for (const s of barrage.salvos) s.aim = targetAt(s.route[s.route.length - 1], 30);
+    barrage.phase = 'flight'; barrage.tool = null; barrage.draft = []; barrage.pickAlt = null;
     noteMode('');
     renderBarrage();
   }
@@ -2314,7 +2366,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     // each unit flies the salvo's route with a small sideways offset so salvos read as streams
     const off = (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 6;
     const route = s.route.map((p, i) => i === s.route.length - 1 ? p : { x: p.x, y: p.y + off });
-    barrage.munitions.push({ type: s.type, salvo: s, x: start.x, y: start.y + off, heading: 0, route, i: 0, err: { x: 0, y: 0 }, engaged: 0, jamNoted: false, dead: false });
+    barrage.munitions.push({ type: s.type, salvo: s, x: start.x, y: start.y + off, heading: 0, route, i: 0, err: { x: 0, y: 0 }, engaged: 0, jamNoted: false, dead: false, aim: s.aim });
     s.fired++;
   }
   function impact(m) {
@@ -2355,7 +2407,8 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       if (m.dead) continue;
       const M = MUNITIONS[m.type];
       // GPS jamming walks a drifting error into the navigation fix; cruise missiles match terrain and barely drift
-      if (M.drift && zoneAt(m.x, m.y)) {
+      if (M.damage && m.aim && m.aim.dead && !m.terminal) retarget(m);
+      if (M.drift && !m.terminal && zoneAt(m.x, m.y)) {
         if (!m.jamNoted) { m.jamNoted = true; floaters.push({ x: m.x, y: m.y - 14, t: 0, text: 'GPS JAMMED', color: COL.patrol }); }
         m.err.x = clamp(m.err.x + (Math.random() - 0.5) * 160 * dt * M.drift, -70, 70);
         m.err.y = clamp(m.err.y + (Math.random() - 0.5) * 160 * dt * M.drift, -70, 70);
@@ -2364,7 +2417,11 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       const gx = p.x + m.err.x, gy = p.y + m.err.y;
       const dx = gx - m.x, dy = gy - m.y, dist = Math.hypot(dx, dy), step = M.speed * dt;
       const want = Math.atan2(dy, dx);
-      m.heading += wrap(want - m.heading) * Math.min(1, dt * (M.slow ? 3 : 6));
+      // terminal dive: on the last leg, close in it locks its aim point and flies straight at it instead of
+      // circling a target it can't turn tightly enough to hit
+      if (last && dist < 40) m.terminal = true;
+      if (m.terminal) m.heading = want;
+      else m.heading += wrap(want - m.heading) * Math.min(1, dt * (M.slow ? 3 : 6));
       if (dist <= step + 2) {
         m.x = gx; m.y = gy;
         if (last) { if (M.damage) impact(m); else { m.dead = true; floaters.push({ x: m.x, y: m.y - 14, t: 0, text: 'DECOY SPENT', color: COL.dim }); } }
@@ -2538,7 +2595,13 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     barrage.salvos.forEach((s, i) => {
       const M = MUNITIONS[s.type];
       html += `<li><i style="background:${M.color}"></i><div><div class="row"><b>${i + 1}.</b> ${s.count}× ${M.name}</div>`;
-      if (plan) html += `<div class="row meta">count <button data-act="cnt-" data-i="${i}">−</button><button data-act="cnt+" data-i="${i}">+</button> · launch T+${s.delay}s <button data-act="del-" data-i="${i}">−</button><button data-act="del+" data-i="${i}">+</button></div>`;
+      if (plan) {
+        html += `<div class="row meta">count <button data-act="cnt-" data-i="${i}">−</button><button data-act="cnt+" data-i="${i}">+</button> · launch T+${s.delay}s <button data-act="del-" data-i="${i}">−</button><button data-act="del+" data-i="${i}">+</button></div>`;
+        if (M.damage) {
+          const bt = s.alt && targetAt(s.alt, 30);
+          html += `<div class="row meta">if target falls: <button data-act="alt" data-i="${i}" title="Where the rest of this salvo diverts if its target is destroyed before they arrive">${barrage.pickAlt === s ? 'pick on map…' : bt ? KINDS[bt.kind].name : 'nearest target'}</button></div>`;
+        }
+      }
       else {
         const air = barrage.munitions.filter(m => m.salvo === s).length;
         html += `<div class="row meta">${s.fired < s.count ? `launching ${s.fired}/${s.count}` : `${air} in flight`} · ${s.hits} hit · ${s.lost} lost</div>`;
@@ -2558,7 +2621,11 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     }
     barrageEl.innerHTML = html;
   }
-  barrageEl.addEventListener('click', e => {
+  // The panel re-renders several times a second during flight, which can swap a button out between press and
+  // release so a 'click' never fires. Act on the press instead, and keep 'click' for keyboard activation.
+  barrageEl.addEventListener('pointerdown', e => { if (e.button === 0) { e.preventDefault(); barrageButton(e); } });
+  barrageEl.addEventListener('click', e => { if (e.detail === 0) barrageButton(e); });
+  function barrageButton(e) {
     const b = e.target.closest('button');
     if (!b) return;
     b.blur();
@@ -2576,9 +2643,13 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       case 'del-': s.delay = Math.max(0, s.delay - 5); break;
       case 'rm': barrage.salvos.splice(+b.dataset.i, 1); break;
       case 'redirect': barrage.redirect = barrage.redirect === s ? null : s; noteMode(barrage.redirect ? 'Click a new target for this Shahed salvo.' : ''); break;
+      case 'alt':
+        if (barrage.pickAlt === s) { s.alt = null; barrage.pickAlt = null; noteMode('Backup target set to automatic.'); }
+        else { barrage.pickAlt = s; barrage.tool = null; barrage.draft = []; noteMode('Click a backup target on the map. Click the button again for automatic.'); }
+        break;
     }
     renderBarrage();
-  });
+  }
 
   function endBarrage() {
     mission.over = true;
@@ -2621,6 +2692,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     barrage.salvos = plan.filter(s => MUNITIONS[s.type] && Array.isArray(s.route) && s.route.length).map(s => ({
       type: s.type, count: Math.max(1, s.count | 0), delay: Math.max(0, +s.delay || 0),
       route: s.route.map(([x, y]) => MUNITIONS[s.type].sea ? toWater(+x, +y) : { x: +x, y: +y }),
+      alt: Array.isArray(s.alt) ? { x: +s.alt[0], y: +s.alt[1] } : null,
       fired: 0, hits: 0, lost: 0, redirected: false,
     }));
     // trim to the budget in order, the same way ai/sim.py does

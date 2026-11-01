@@ -9,7 +9,7 @@ import random
 import sys
 
 from doctrines import general as reward
-from plans import FIELDS, SLOTS, decode, describe, random_action
+from plans import FIELDS, N, SLOTS, decode, describe, random_action
 from sim import simulate
 
 POP, GENERATIONS, SEEDS, ELITE = 40, 30, 3, 8
@@ -24,13 +24,13 @@ def mutate(a, rng, rate=0.15):
     a = list(a)
     for i in range(len(a)):
         if rng.random() < rate:
-            a[i] = rng.randrange(FIELDS[i % 5])
+            a[i] = rng.randrange(FIELDS[i % N])
     return a
 
 
 def crossover(a, b, rng):
     # swap whole salvos so a good salvo stays intact
-    return [x for i in range(SLOTS) for x in (a if rng.random() < 0.5 else b)[i * 5:(i + 1) * 5]]
+    return [x for i in range(SLOTS) for x in (a if rng.random() < 0.5 else b)[i * N:(i + 1) * N]]
 
 
 def main(seed=0):

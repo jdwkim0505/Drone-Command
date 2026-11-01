@@ -16,7 +16,7 @@ pip install -r requirements.txt
 | File | What it does |
 | --- | --- |
 | `sim.py` | Headless Barrage simulator: the fixed map from the game, same rules, no graphics. `simulate(plan, seed)` runs one strike in ~20 ms and returns what happened. Run it directly for a speed test. |
-| `plans.py` | Turns 25 integers (5 salvos × type, target, route, count, delay) into a plan. This is the network's "vocabulary". |
+| `plans.py` | Turns 48 integers (8 salvos × type, target, route, count, delay, backup target) into a plan. This is the network's "vocabulary". |
 | `doctrines.py` | **One reward function per strategist.** Same network, same simulator; only what it's rewarded for changes. Add your own here. |
 | `env.py` | Gymnasium environment. One episode = one plan = one strike, scored by the chosen doctrine. |
 | `optimize.py` | Genetic algorithm baseline. No neural network: random plans that evolve. The score to beat. |
@@ -51,7 +51,7 @@ python export_plan.py blitz         # watch a strategist's plan play out in the 
 ## How it fits together
 
 1. The network sees the battlefield (`observe()` in `env.py`: every enemy unit's type, position, HP and ammo).
-2. It outputs 25 integers, which `plans.decode()` turns into up to 5 salvos.
+2. It outputs 48 integers, which `plans.decode()` turns into up to 8 salvos, each with a backup target to divert to if its target falls first.
 3. `sim.simulate()` plays the strike out with random dice rolls.
 4. The doctrine's reward scores it, and PPO nudges the network's ~211k weights toward plans that scored well.
 

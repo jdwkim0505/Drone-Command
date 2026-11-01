@@ -11,7 +11,8 @@ A plan is a list of salvos. Each salvo is a dict:
     {"type": "shahed",            # shahed | decoy | cruise | usv
      "count": 6,
      "delay": 0,                  # seconds after launch before the first one leaves
-     "route": [(x, y), ..., (tx, ty)]}   # waypoints, the last point is where it strikes
+     "route": [(x, y), ..., (tx, ty)],   # waypoints, the last point is where it strikes
+     "alt": (x, y)}               # optional backup target if the first one falls before they arrive
 
 The map is the fixed Barrage map from the game: same city, same defenses. The only
 randomness is the dice rolls (hits, intercepts, GPS drift), driven by `seed`, so the same
@@ -111,7 +112,7 @@ class Target:
 
 
 class Munition:
-    __slots__ = ("type", "m", "salvo", "x", "y", "heading", "route", "i", "ex", "ey", "engaged", "dead")
+    __slots__ = ("type", "m", "salvo", "x", "y", "heading", "route", "i", "ex", "ey", "engaged", "dead", "aim", "terminal")
 
     def __init__(self, mtype, salvo, x, y, route):
         self.type, self.m, self.salvo = mtype, MUNITIONS[mtype], salvo
@@ -120,6 +121,8 @@ class Munition:
         self.ex = self.ey = 0.0      # GPS error walked in by jamming
         self.engaged = 0             # SAM missiles in flight toward it
         self.dead = False
+        self.aim = salvo.get("aim")  # the target it's flying at, so it can divert if that falls first
+        self.terminal = False        # locked onto its aim point for the final dive
 
 
 def build_city(rng):
@@ -173,6 +176,38 @@ def simulate(plan, seed=0, budget=BUDGET):
             salvos.append(dict(s, count=n, fired=0, hits=0, lost=0))
             left -= n * c
     targets = build_city(rng)
+
+    def target_at(p, r=30.0):
+        best, bd = None, r
+        for t in targets:
+            if not t.dead:
+                d = math.hypot(t.x - p[0], t.y - p[1])
+                if d < bd:
+                    best, bd = t, d
+        return best
+
+    for s in salvos:
+        s["aim"] = target_at(s["route"][-1])
+
+    def retarget(m):
+        """Datalinked munitions divert from a destroyed target: to the salvo's backup if it still stands,
+        otherwise to the nearest objective they can reach."""
+        alt = target_at(m.salvo["alt"]) if m.salvo.get("alt") else None
+        nxt = alt
+        if nxt is None:
+            bd = float("inf")
+            for t in targets:
+                if t.dead or t.kind not in OBJECTIVES:
+                    continue
+                if m.m["sea"] and t.y < coast_y(t.x) - 40:
+                    continue
+                d = math.hypot(t.x - m.x, t.y - m.y)
+                if d < bd:
+                    nxt, bd = t, d
+        if nxt is None:
+            return
+        m.aim = nxt
+        m.route, m.i, m.ex, m.ey = [to_water(nxt.x, nxt.y) if m.m["sea"] else (nxt.x, nxt.y)], 0, 0.0, 0.0
     munitions, missiles = [], []
     stats = dict(intercepted=0, impacts=0, sam_shots=0, enemy_spend=0.0, lost_to={}, kill_times={})
     clock = 0.0
@@ -238,7 +273,9 @@ def simulate(plan, seed=0, budget=BUDGET):
             if m.dead:
                 continue
             M = m.m
-            if M["drift"] and math.hypot(m.x - jx, m.y - jy) < jr:
+            if M["damage"] and m.aim is not None and m.aim.dead and not m.terminal:
+                retarget(m)
+            if M["drift"] and not m.terminal and math.hypot(m.x - jx, m.y - jy) < jr:
                 m.ex = max(-70, min(70, m.ex + (rng.random() - 0.5) * 160 * dt * M["drift"]))
                 m.ey = max(-70, min(70, m.ey + (rng.random() - 0.5) * 160 * dt * M["drift"]))
             px, py = m.route[m.i]
@@ -246,7 +283,12 @@ def simulate(plan, seed=0, budget=BUDGET):
             dx, dy = gx - m.x, gy - m.y
             dist, step = math.hypot(dx, dy), M["speed"] * dt
             want = math.atan2(dy, dx)
-            m.heading += wrap(want - m.heading) * min(1.0, dt * (3 if M["slow"] else 6))
+            if m.i == len(m.route) - 1 and dist < 40:
+                m.terminal = True        # final dive: fly straight at the locked aim point
+            if m.terminal:
+                m.heading = want
+            else:
+                m.heading += wrap(want - m.heading) * min(1.0, dt * (3 if M["slow"] else 6))
             if dist <= step + 2:
                 m.x, m.y = gx, gy
                 if m.i == len(m.route) - 1:

@@ -26,8 +26,13 @@ LIVE = "https://jdwkim0505.com/drone-command/"
 
 
 def plan_list(action):
-    return [dict(type=s["type"], count=s["count"], delay=s["delay"],
-                 route=[[round(x), round(y)] for x, y in s["route"]]) for s in decode(action)]
+    out = []
+    for s in decode(action):
+        d = dict(type=s["type"], count=s["count"], delay=s["delay"], route=[[round(x), round(y)] for x, y in s["route"]])
+        if s["alt"]:
+            d["alt"] = [round(v) for v in s["alt"]]
+        out.append(d)
+    return out
 
 
 def plan_json(action):
