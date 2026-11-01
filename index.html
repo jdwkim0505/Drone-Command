@@ -421,6 +421,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     boat: { hp: 1, name: 'Patrol boat', hl: 8, hw: 2.6, h: 2.4, color: '#59626a', naval: true, speed: 28, gun: 120 },
     sam: { hp: 2, name: 'SAM site', hl: 7, hw: 7, h: 3, color: '#4f5a3c', range: 250 },
     gun: { hp: 1, name: 'Gun team', hl: 4, hw: 4, h: 2, color: '#4f5a3c', range: 90 },
+    shorad: { hp: 1, name: 'Short-range SAM', hl: 5, hw: 5, h: 3, color: '#4f5a3c', range: 120 },
     plant: { hp: 3, name: 'Power plant', hl: 14, hw: 10, h: 8, color: '#5a5f52', objective: true },
     substation: { hp: 2, name: 'Substation', hl: 9, hw: 9, h: 4, color: '#55606a', objective: true },
     port: { hp: 2, name: 'Port', hl: 16, hw: 6, h: 4, color: '#5f5a46', objective: true },
@@ -980,7 +981,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     }
     ctx.fillStyle = 'rgba(248,113,113,0.16)'; ctx.strokeStyle = COL.danger; ctx.lineWidth = 1.6;
     ctx.beginPath();
-    if (t.kind === 'aa' || t.kind === 'sam' || t.kind === 'gun') { const r = t.kind === 'gun' ? 7 : 10; ctx.moveTo(t.x, t.y - r); ctx.lineTo(t.x + r, t.y); ctx.lineTo(t.x, t.y + r); ctx.lineTo(t.x - r, t.y); ctx.closePath(); }
+    if (t.kind === 'aa' || t.kind === 'sam' || t.kind === 'shorad' || t.kind === 'gun') { const r = t.kind === 'gun' ? 7 : t.kind === 'shorad' ? 8 : 10; ctx.moveTo(t.x, t.y - r); ctx.lineTo(t.x + r, t.y); ctx.lineTo(t.x, t.y + r); ctx.lineTo(t.x - r, t.y); ctx.closePath(); }
     else if (t.kind === 'jammer') { ctx.moveTo(t.x, t.y - 11); ctx.lineTo(t.x + 9, t.y + 7); ctx.lineTo(t.x - 9, t.y + 7); ctx.closePath(); }
     else ctx.rect(t.x - k.hl, t.y - k.hw, k.hl * 2, k.hw * 2);
     ctx.fill(); ctx.stroke();
@@ -1494,7 +1495,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       [t.dir, 0, 6.6, 3.3, 2.7, 4.2, '#4b5337'],
       [t.turret, -0.4, 2.8, 2.3, 4.2, 6, '#58613f'],
       [t.turret, 6, 3.5, 0.32, 5.1, 5.7, '#58613f'],
-    ] : t.kind === 'aa' ? [
+    ] : (t.kind === 'aa' || t.kind === 'shorad') ? [
       [t.dir, 0, k.hl, k.hw, 0, k.h, k.color],
       [t.turret, 0, 3.2, 2.6, k.h, k.h + 3, '#5d6846'],
       [t.turret, 1, 3.6, 1.8, k.h + 3, k.h + 4.6, '#6a7550'],
@@ -2220,10 +2221,11 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   // the AI strategists trained in ai/, one per doctrine (regenerate with: python ai/export_plan.py --all-js)
   const AI_PLANS = {"general":{"name":"General","blurb":"Destroys the most, cost barely matters","plan":[{"type":"shahed","count":20,"delay":5,"route":[[-150,-280],[560,-330]]},{"type":"shahed","count":12,"delay":0,"route":[[360,40]]},{"type":"shahed","count":4,"delay":5,"route":[[500,164]]},{"type":"shahed","count":12,"delay":15,"route":[[-100,-430],[620,-460],[620,-120]]},{"type":"shahed","count":24,"delay":15,"route":[[-100,-430],[720,-460],[720,30]]}],"stats":{"objectives":4.94,"cost":1995000,"enemy":49479200,"launched":57,"lost":18.6,"finish":55.6}},"economist":{"name":"Economist","blurb":"Most damage per dollar","plan":[{"type":"shahed","count":16,"delay":10,"route":[[-150,-280],[560,-330]]},{"type":"shahed","count":8,"delay":5,"route":[[500,164]]},{"type":"shahed","count":12,"delay":5,"route":[[360,40]]},{"type":"shahed","count":12,"delay":15,"route":[[720,30]]}],"stats":{"objectives":3.84,"cost":1680000,"enemy":51879600,"launched":48,"lost":17.5,"finish":46.8}},"blitz":{"name":"Blitz","blurb":"Fastest destruction","plan":[{"type":"shahed","count":20,"delay":0,"route":[[-150,-280],[560,-330]]},{"type":"shahed","count":12,"delay":0,"route":[[360,40]]},{"type":"shahed","count":8,"delay":0,"route":[[500,164]]},{"type":"shahed","count":16,"delay":5,"route":[[-100,-430],[720,-460],[720,30]]},{"type":"shahed","count":32,"delay":0,"route":[[-100,-430],[620,-460],[620,-120]]}],"stats":{"objectives":3.96,"cost":1995000,"enemy":48281200,"launched":57,"lost":20.0,"finish":46.0}},"attrition":{"name":"Attrition","blurb":"Drains the defender's interceptor budget","plan":[{"type":"shahed","count":20,"delay":15,"route":[[-300,250],[540,250],[620,-120]]},{"type":"shahed","count":12,"delay":0,"route":[[-300,250],[280,250],[360,40]]},{"type":"shahed","count":16,"delay":5,"route":[[-150,-280],[560,-330]]},{"type":"shahed","count":12,"delay":10,"route":[[-300,250],[280,250],[360,40]]},{"type":"shahed","count":16,"delay":5,"route":[[-300,250],[280,250],[360,40]]}],"stats":{"objectives":2.8,"cost":1995000,"enemy":55379200,"launched":57,"lost":27.6,"finish":56.0}},"surgeon":{"name":"Surgeon","blurb":"Fewest munitions, fewest losses","plan":[{"type":"cruise","count":2,"delay":5,"route":[[-150,-280],[560,-330]]},{"type":"usv","count":7,"delay":10,"route":[[-200,480],[640,420],[520,-180]]}],"stats":{"objectives":1.68,"cost":2000000,"enemy":2880000,"launched":3,"lost":1.0,"finish":66.3}},"decapitation":{"name":"Decapitation","blurb":"Command post and radar first","plan":[{"type":"cruise","count":5,"delay":0,"route":[[-150,-280],[560,-330]]},{"type":"shahed","count":12,"delay":0,"route":[[360,40]]},{"type":"shahed","count":32,"delay":15,"route":[[500,164]]},{"type":"shahed","count":24,"delay":15,"route":[[-150,-280],[520,-180]]},{"type":"decoy","count":8,"delay":15,"route":[[-150,-280],[560,-330]]}],"stats":{"objectives":2.88,"cost":2000000,"enemy":28528800,"launched":16,"lost":8.0,"finish":40.7}}};
   const TOOL_KEYS = { Digit1: 'shahed', Digit2: 'decoy', Digit3: 'cruise', Digit4: 'usv' };
-  const SAM_USD = 3e6, SHIP_SAM_USD = 1.2e6, INTERCEPTOR_USD = 20e3, GUN_PK = 0.12;
+  const SAM_USD = 3e6, SHIP_SAM_USD = 1.2e6, SHORAD_USD = 4e5, INTERCEPTOR_USD = 20e3, GUN_PK = 0.12;
   // Barrage map scale: 1 px = 100 m (the map is ~170 km across), time runs ~100x. Keep in step with KINDS in ai/sim.py.
   //   sam: 30 km missile reach; its own launcher radar sees 15 km (7 km vs low cruise missiles), the network the rest
   //   frigate: 50 km naval SAM; mast radar 38 km (20 km vs sea-skimmers); 76 mm deck gun 11 km
+  //   shorad: short-range missile system, 12 km, carries its own radar
   //   boat: 30 mm autocannon 5 km · gun: SHORAD gun team 4.5 km
   //   interceptor: short-endurance quadcopter (~280 km/h): spots drones at 3 km with its camera, flies out at most 6 km,
   //   radar-cued anywhere inside that
@@ -2232,6 +2234,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
   const SAM_MISSILE_SPEED = 1200, SAM_RELOAD = 0.4;  // px/s; ~40 s between launches from one site
   const BARRAGE_RANGES = {
     sam: { range: 300, own: 150, ownLow: 70 },
+    shorad: { range: 120, own: 120, ownLow: 60 },
     frigate: { range: 500, own: 380, ownLow: 200, gun: 110 },
     boat: { gun: 50 },
     gun: { range: 45 },
@@ -2267,11 +2270,15 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     // scale: 1 px = 100 m, time runs ~100x; ranges below are in px (see BARRAGE_RANGES)
     Object.assign(spawnTarget(520, -180, 'radar'), BARRAGE_RANGES.radar);
     spawnTarget(300, 160, 'coastal_radar');
-    for (const [x, y] of [[430, -100], [630, -200]]) Object.assign(spawnTarget(x, y, 'sam'), BARRAGE_RANGES.sam, { ammo: 8 });
-    for (const [x, y] of [[450, -80], [650, -180], [540, -305], [680, -40]]) Object.assign(spawnTarget(x, y, 'gun'), BARRAGE_RANGES.gun);
-    Object.assign(spawnTarget(230, -60, 'interceptor'), BARRAGE_RANGES.interceptor);
-    Object.assign(spawnTarget(470, -420, 'interceptor'), BARRAGE_RANGES.interceptor);
-    const fr = Object.assign(spawnTarget(380, 320, 'frigate'), BARRAGE_RANGES.frigate); fr.ammo = 6; fr.wp = { x: 580, y: 320 }; fr.dir = 0;
+    // medium-range SAM batteries (several launchers, deeper magazines) and short-range systems in the gaps
+    for (const [x, y] of [[430, -100], [630, -200]]) Object.assign(spawnTarget(x, y, 'sam'), BARRAGE_RANGES.sam, { ammo: 12 });
+    for (const [x, y] of [[410, 100], [700, -60]]) Object.assign(spawnTarget(x, y, 'shorad'), BARRAGE_RANGES.shorad, { ammo: 6 });
+    // gun teams on the SAM sites and command post, plus mobile fire groups out on the approach axes
+    for (const [x, y] of [[450, -80], [650, -180], [540, -305], [680, -40], [300, -140], [260, 95], [410, -350], [440, 120]])
+      Object.assign(spawnTarget(x, y, 'gun'), BARRAGE_RANGES.gun);
+    // interceptor drone teams: forward screens west and north, plus two close-in teams
+    for (const [x, y] of [[230, -60], [470, -420], [340, -260], [600, -40]]) Object.assign(spawnTarget(x, y, 'interceptor'), BARRAGE_RANGES.interceptor);
+    const fr = Object.assign(spawnTarget(380, 320, 'frigate'), BARRAGE_RANGES.frigate); fr.ammo = 8; fr.wp = { x: 580, y: 320 }; fr.dir = 0;
     const b = Object.assign(spawnTarget(60, 330, 'boat'), BARRAGE_RANGES.boat); b.wp = { x: -160, y: 330 };
     zones.push({ x: 520, y: -110, r: 150 });
     hudEl.hidden = true; helpEl.hidden = true; missionEl.hidden = true; barrageEl.hidden = false;
@@ -2480,7 +2487,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       }
       if (!t.ammo) return;
     }
-    if (t.kind === 'sam' || (t.kind === 'frigate' && t.ammo)) {
+    if (t.kind === 'sam' || t.kind === 'shorad' || (t.kind === 'frigate' && t.ammo)) {
       t.cs = (t.cs || 0) - dt;  // own cooldown: ship() already ticks t.cd for its drone air defense
       if (t.cs > 0 || !t.ammo) return;
       // fires out to full missile reach on anything its own radar sees, or that a radar station hands over
@@ -2493,7 +2500,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       }
       if (!b) return;
       t.cs = SAM_RELOAD; t.ammo--; b.engaged++;
-      barrage.samShots++; barrage.enemySpend += t.kind === 'sam' ? SAM_USD : SHIP_SAM_USD;
+      barrage.samShots++; barrage.enemySpend += t.kind === 'sam' ? SAM_USD : t.kind === 'shorad' ? SHORAD_USD : SHIP_SAM_USD;
       barrage.missiles.push({ x: t.x, y: t.y, tx: b.x, ty: b.y, target: b, trail: [] });
       return;
     }

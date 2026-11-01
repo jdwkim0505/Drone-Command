@@ -49,6 +49,7 @@ TYPES = list(MUNITIONS)
 #   frigate      naval SAM reach 50 km; its mast radar sees 38 km (20 km vs sea-skimmers), and the shore
 #                radars let it engage anything they track out to full reach. gun = 76 mm deck gun (11 km)
 #   boat         30 mm autocannon (5 km)
+#   shorad       short-range missile system guarding a site gap (12 km, carries its own radar)
 #   gun          SHORAD gun team (4.5 km)
 #   interceptor  quadcopter interceptor: spots on its own at 3 km, flies out up to 6 km from home, and is cued
 #                onto anything a radar station tracks inside that leash
@@ -59,6 +60,7 @@ KINDS = {
     "radar": dict(hp=1, hl=6, hw=6, cover=600, cover_low=280),
     "coastal_radar": dict(hp=1, hl=6, hw=6, cover=450, cover_low=320),   # watches the sea approach
     "sam": dict(hp=2, hl=7, hw=7, range=300, own=150, own_low=70), "gun": dict(hp=1, hl=4, hw=4, range=45),
+    "shorad": dict(hp=1, hl=5, hw=5, range=120, own=120, own_low=60),   # short-range SAM: 12 km, own radar
     "interceptor": dict(hp=1, hl=6, hw=6, detect=30, leash=60),
     "frigate": dict(hp=4, hl=22, hw=5.5, range=500, own=380, own_low=200, gun=110, speed=9),
     "boat": dict(hp=1, hl=8, hw=2.6, gun=50, speed=28),
@@ -71,7 +73,7 @@ GUN_RELOAD, GUN_PK = 0.5, 0.12
 SHIP_GUN_RELOAD = 1.2
 DRONE_SPEED = 95.0
 INT_SPEED, INT_PK, INT_RELOAD = 85.0, 0.65, 1.5   # quadcopter interceptors, ~280 km/h
-SAM_USD, SHIP_SAM_USD, INTERCEPTOR_USD = 3e6, 1.2e6, 20e3
+SAM_USD, SHIP_SAM_USD, SHORAD_USD, INTERCEPTOR_USD = 3e6, 1.2e6, 4e5, 20e3
 
 PAD = (-880.0, -40.0)     # air launch site
 DOCK = (-860.0, 380.0)    # sea launch site
@@ -150,15 +152,21 @@ def build_city(rng):
     add("cp", 560, -330)
     add("coastal_radar", 300, 160)
     add("radar", 520, -180)
-    add("sam", 430, -100).ammo = 8
-    add("sam", 630, -200).ammo = 8
-    # gun teams: on each SAM site, the command post, and between the plant and fuel depot
-    for x, y in [(450, -80), (650, -180), (540, -305), (680, -40)]:
+    # medium-range SAM batteries: several launchers each, so a deeper magazine
+    add("sam", 430, -100).ammo = 12
+    add("sam", 630, -200).ammo = 12
+    # short-range missile systems plugging the gaps: the substation/coast side and the plant/fuel side
+    add("shorad", 410, 100).ammo = 6
+    add("shorad", 700, -60).ammo = 6
+    # gun teams: on each SAM site and the command post, plus mobile fire groups out on the approach axes
+    for x, y in [(450, -80), (650, -180), (540, -305), (680, -40),
+                 (300, -140), (260, 95), (410, -350), (440, 120)]:
         add("gun", x, y)
-    add("interceptor", 230, -60)      # western axis screen
-    add("interceptor", 470, -420)     # northern axis screen
+    # interceptor drone teams: forward screens on the west and north axes, plus two close-in teams
+    for x, y in [(230, -60), (470, -420), (340, -260), (600, -40)]:
+        add("interceptor", x, y)
     fr = add("frigate", 380, 320)
-    fr.ammo, fr.wp, fr.dir = 6, (580, 320), 0.0
+    fr.ammo, fr.wp, fr.dir = 8, (580, 320), 0.0
     b = add("boat", 60, 330)
     b.wp = (-160, 330)
     return t
@@ -353,7 +361,7 @@ def simulate(plan, seed=0, budget=BUDGET):
                             down(m, "ships")
                 if not t.ammo:
                     continue
-            if t.kind in ("sam", "frigate"):
+            if t.kind in ("sam", "shorad", "frigate"):
                 t.cd -= dt
                 if t.cd > 0 or not t.ammo:
                     continue
@@ -373,7 +381,7 @@ def simulate(plan, seed=0, budget=BUDGET):
                 t.ammo -= 1
                 best.engaged += 1
                 stats["sam_shots"] += 1
-                stats["enemy_spend"] += SAM_USD if t.kind == "sam" else SHIP_SAM_USD
+                stats["enemy_spend"] += {"sam": SAM_USD, "shorad": SHORAD_USD}.get(t.kind, SHIP_SAM_USD)
                 missiles.append(dict(x=t.x, y=t.y, tx=best.x, ty=best.y, target=best))
             elif t.kind == "gun":
                 t.cd -= dt
