@@ -43,7 +43,7 @@ def route(mtype, r, tx, ty):
         [],                                    # 0: straight in
         [(-100, -430), (tx, -460)],            # 1: wide northern arc, dives in from the north
         [(-300, 250), (tx - 80, 250)],         # 2: low over the sea, comes in from the south
-        [(-150, -280)],                        # 3: dogleg north of the GPS jamming zone
+        [(-150, -280)],                        # 3: dogleg through the north-west
     ][r] + [(tx, ty)]
 
 

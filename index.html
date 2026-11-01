@@ -123,7 +123,11 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
 #barrage li .meta { color: var(--ink-dim); font-size: 11px; }
 #barrage .go { width: 100%; padding: 8px; font: 600 12px var(--font-display); letter-spacing: 0.12em; text-transform: uppercase; border-color: var(--sel); color: var(--sel); }
 #barrage .go:disabled { opacity: 0.4; }
-#barrage .ai { width: 100%; padding: 7px; margin-bottom: 6px; font-size: 12px; border-color: var(--track); color: var(--track); }
+#barrage .ai-h { font: 600 11px var(--font-display); letter-spacing: 0.14em; text-transform: uppercase; color: var(--track); margin: 4px 0 5px; }
+#barrage .ais { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-bottom: 10px; }
+#barrage .ais button { text-align: left; padding: 5px 7px; font-size: 11px; line-height: 1.3; border-color: color-mix(in srgb, var(--track) 45%, var(--panel-edge)); }
+#barrage .ais button b { color: var(--track); font-weight: 600; }
+#barrage .ais small { display: block; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
 #barrage .speeds { display: flex; gap: 4px; margin-bottom: 8px; }
 #barrage .speeds button.on { border-color: var(--sel); color: var(--sel); }
 .label { font: 600 10px var(--font-display); letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-dim); margin-bottom: 6px; }
@@ -2183,8 +2187,8 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     cruise: { name: 'Cruise missile', cost: 1500, usd: 1.5e6, speed: 255, damage: 3, blast: 20, count: 1, gap: 1.2, color: '#f472b6', low: true, drift: 0.15, note: '850 km/h, low, 450 kg warhead' },
     usv: { name: 'Sea drone', cost: 250, usd: 250e3, speed: 23, damage: 3, blast: 20, count: 3, gap: 1, color: '#7dd3fc', sea: true, drift: 0, note: '42 knots, water only, 300 kg' },
   };
-  // the best plan found by the neural network in ai/ (regenerate with: python ai/export_plan.py --js)
-  const AI_PLAN = [{"type":"shahed","count":8,"delay":0,"route":[[-100,-430],[560,-460],[560,-330]]},{"type":"shahed","count":12,"delay":10,"route":[[-300,250],[280,250],[360,40]]},{"type":"shahed","count":8,"delay":15,"route":[[-100,-430],[720,-460],[720,30]]},{"type":"shahed","count":8,"delay":10,"route":[[-300,250],[420,250],[500,164]]},{"type":"shahed","count":8,"delay":15,"route":[[-100,-430],[620,-460],[620,-120]]}];
+  // the AI strategists trained in ai/, one per doctrine (regenerate with: python ai/export_plan.py --all-js)
+  const AI_PLANS = {"general":{"name":"General","blurb":"Destroys the most, cost barely matters","plan":[{"type":"shahed","count":20,"delay":5,"route":[[-150,-280],[560,-330]]},{"type":"shahed","count":12,"delay":0,"route":[[360,40]]},{"type":"shahed","count":4,"delay":5,"route":[[500,164]]},{"type":"shahed","count":12,"delay":15,"route":[[-100,-430],[620,-460],[620,-120]]},{"type":"shahed","count":24,"delay":15,"route":[[-100,-430],[720,-460],[720,30]]}],"stats":{"objectives":4.94,"cost":1995000,"enemy":49479200,"launched":57,"lost":18.6,"finish":55.6}},"economist":{"name":"Economist","blurb":"Most damage per dollar","plan":[{"type":"shahed","count":16,"delay":10,"route":[[-150,-280],[560,-330]]},{"type":"shahed","count":8,"delay":5,"route":[[500,164]]},{"type":"shahed","count":12,"delay":5,"route":[[360,40]]},{"type":"shahed","count":12,"delay":15,"route":[[720,30]]}],"stats":{"objectives":3.84,"cost":1680000,"enemy":51879600,"launched":48,"lost":17.5,"finish":46.8}},"blitz":{"name":"Blitz","blurb":"Fastest destruction","plan":[{"type":"shahed","count":20,"delay":0,"route":[[-150,-280],[560,-330]]},{"type":"shahed","count":12,"delay":0,"route":[[360,40]]},{"type":"shahed","count":8,"delay":0,"route":[[500,164]]},{"type":"shahed","count":16,"delay":5,"route":[[-100,-430],[720,-460],[720,30]]},{"type":"shahed","count":32,"delay":0,"route":[[-100,-430],[620,-460],[620,-120]]}],"stats":{"objectives":3.96,"cost":1995000,"enemy":48281200,"launched":57,"lost":20.0,"finish":46.0}},"attrition":{"name":"Attrition","blurb":"Drains the defender's interceptor budget","plan":[{"type":"shahed","count":20,"delay":15,"route":[[-300,250],[540,250],[620,-120]]},{"type":"shahed","count":12,"delay":0,"route":[[-300,250],[280,250],[360,40]]},{"type":"shahed","count":16,"delay":5,"route":[[-150,-280],[560,-330]]},{"type":"shahed","count":12,"delay":10,"route":[[-300,250],[280,250],[360,40]]},{"type":"shahed","count":16,"delay":5,"route":[[-300,250],[280,250],[360,40]]}],"stats":{"objectives":2.8,"cost":1995000,"enemy":55379200,"launched":57,"lost":27.6,"finish":56.0}},"surgeon":{"name":"Surgeon","blurb":"Fewest munitions, fewest losses","plan":[{"type":"cruise","count":2,"delay":5,"route":[[-150,-280],[560,-330]]},{"type":"usv","count":7,"delay":10,"route":[[-200,480],[640,420],[520,-180]]}],"stats":{"objectives":1.68,"cost":2000000,"enemy":2880000,"launched":3,"lost":1.0,"finish":66.3}},"decapitation":{"name":"Decapitation","blurb":"Command post and radar first","plan":[{"type":"cruise","count":5,"delay":0,"route":[[-150,-280],[560,-330]]},{"type":"shahed","count":12,"delay":0,"route":[[360,40]]},{"type":"shahed","count":32,"delay":15,"route":[[500,164]]},{"type":"shahed","count":24,"delay":15,"route":[[-150,-280],[520,-180]]},{"type":"decoy","count":8,"delay":15,"route":[[-150,-280],[560,-330]]}],"stats":{"objectives":2.88,"cost":2000000,"enemy":28528800,"launched":16,"lost":8.0,"finish":40.7}}};
   const TOOL_KEYS = { Digit1: 'shahed', Digit2: 'decoy', Digit3: 'cruise', Digit4: 'usv' };
   const SAM_USD = 3e6, SHIP_SAM_USD = 1.2e6, INTERCEPTOR_USD = 20e3, GUN_PK = 0.06;
   const barrage = { phase: 'plan', budget: 2000, by: {}, salvos: [], tool: null, draft: [], clock: 0, munitions: [], missiles: [], speed: 1, redirect: null,
@@ -2202,22 +2206,25 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       pad: { x: -880, y: -40 }, dock: { x: -860, y: 380 }, coast: { y: 170, ph: 1.1 } });
     Object.assign(barrage, { phase: 'plan', salvos: plan, tool: null, draft: [], clock: 0, munitions: [], missiles: [], speed: 1, redirect: null,
       enemySpend: 0, samShots: 0, intercepted: 0, impacts: 0, endTimer: 0, by: {} });
-    // the defended city: five objectives under two SAM sites, a radar, gun teams, interceptor drones,
-    // GPS jamming over the western approach, and a frigate guarding the port
+    // the defended city, laid out as a layered air defense (keep in step with build_city in ai/sim.py):
+    // two SAM sites that cover each other and every inland objective, the radar between them, gun teams
+    // on the SAM sites and high-value assets, interceptor drones forward on the west and north approaches,
+    // the frigate holding the seaward approach to the port, a patrol boat picket out on the sea lane,
+    // and GPS jamming over the city core
     spawnTarget(620, -120, 'plant');
     spawnTarget(360, 40, 'substation');
     spawnTarget(720, 30, 'fuel');
     spawnTarget(500, coastY(500) - 10, 'port');
     spawnTarget(560, -330, 'cp');
-    spawnTarget(430, -200, 'radar');
-    spawnTarget(300, -60, 'sam').ammo = 8;
-    spawnTarget(640, -250, 'sam').ammo = 8;
-    for (const [x, y] of [[160, -130], [230, 70], [520, 20], [450, -330]]) spawnTarget(x, y, 'gun');
-    spawnTarget(260, -220, 'interceptor');
-    spawnTarget(560, -40, 'interceptor');
-    const fr = spawnTarget(480, 400, 'frigate'); fr.ammo = 6; fr.wp = { x: 640, y: 380 }; fr.dir = 0;
-    const b = spawnTarget(200, 320, 'boat'); b.wp = { x: 40, y: 300 };
-    zones.push({ x: 120, y: -40, r: 140 });
+    spawnTarget(520, -180, 'radar');
+    spawnTarget(430, -100, 'sam').ammo = 8;
+    spawnTarget(630, -200, 'sam').ammo = 8;
+    for (const [x, y] of [[450, -80], [650, -180], [540, -305], [680, -40]]) spawnTarget(x, y, 'gun');
+    spawnTarget(230, -60, 'interceptor');
+    spawnTarget(470, -420, 'interceptor');
+    const fr = spawnTarget(380, 320, 'frigate'); fr.ammo = 6; fr.wp = { x: 580, y: 320 }; fr.dir = 0;
+    const b = spawnTarget(60, 330, 'boat'); b.wp = { x: -160, y: 330 };
+    zones.push({ x: 520, y: -110, r: 150 });
     hudEl.hidden = true; helpEl.hidden = true; missionEl.hidden = true; barrageEl.hidden = false;
     const left = 16, right = W - 310, top = 50, bottom = H - 16;
     cam.z = clamp(Math.min((right - left) / 1740, (bottom - top) / 860), 0.3, 1);
@@ -2511,7 +2518,15 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
       html += `</div>${plan ? `<button data-act="rm" data-i="${i}" title="Remove salvo">×</button>` : '<span></span>'}</li>`;
     });
     html += '</ul>';
-    if (plan) html += `<button class="ai" id="bAi">Load the AI's plan</button><button class="go" id="bLaunch" ${barrage.salvos.length ? '' : 'disabled'}>Launch <kbd>Space</kbd></button>`;
+    if (plan) {
+      const ais = Object.entries(AI_PLANS);
+      if (ais.length) {
+        html += `<div class="ai-h">AI strategists</div><div class="ais">`;
+        for (const [key, a] of ais) html += `<button data-ai="${key}" title="${a.blurb}. Average of 50 simulated strikes."><b>${a.name}</b><small>${a.blurb}</small><small>${a.stats.objectives.toFixed(1)}/5 · ${usd(a.stats.cost)} · ${a.stats.launched} fired</small></button>`;
+        html += '</div>';
+      }
+      html += `<button class="go" id="bLaunch" ${barrage.salvos.length ? '' : 'disabled'}>Launch <kbd>Space</kbd></button>`;
+    }
     barrageEl.innerHTML = html;
   }
   barrageEl.addEventListener('click', e => {
@@ -2521,7 +2536,7 @@ button kbd { font: inherit; color: var(--sel); margin-right: 4px; }
     if (b.dataset.tool) { setTool(b.dataset.tool); return; }
     if (b.dataset.speed) { barrage.speed = +b.dataset.speed; renderBarrage(); return; }
     if (b.id === 'bLaunch') { launchBarrage(); return; }
-    if (b.id === 'bAi') { loadPlan(AI_PLAN); noteMode("The AI's plan is loaded. Press Space to watch it fly."); return; }
+    if (b.dataset.ai) { const a = AI_PLANS[b.dataset.ai]; loadPlan(a.plan); noteMode(`${a.name}'s plan is loaded (${a.blurb.toLowerCase()}). Press Space to watch it fly.`); return; }
     const s = barrage.salvos[+b.dataset.i];
     if (!s) return;
     const M = MUNITIONS[s.type];

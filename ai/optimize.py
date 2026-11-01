@@ -8,7 +8,7 @@ them, repeat. Whatever score this reaches is the bar the neural network has to b
 import random
 import sys
 
-from env import reward
+from doctrines import general as reward
 from plans import FIELDS, SLOTS, decode, describe, random_action
 from sim import simulate
 
