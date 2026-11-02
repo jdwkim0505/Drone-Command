@@ -11,7 +11,8 @@ A plan is a list of salvos. Each salvo is a dict:
     {"type": "shahed",            # shahed | decoy | cruise | usv
      "count": 6,
      "delay": 0,                  # seconds after launch before the first one leaves
-     "route": [(x, y), ..., (tx, ty)]}   # waypoints, the last point is where it strikes
+     "route": [(x, y), ..., (tx, ty)],   # waypoints, the last point is where it strikes
+     "alt": (x, y)}               # optional backup target if the first one falls before they arrive
 
 The map is the fixed Barrage map from the game: same city, same defenses. The only
 randomness is the dice rolls (hits, intercepts, GPS drift), driven by `seed`, so the same
@@ -23,43 +24,67 @@ import random
 # ---------- rules (kept in step with index.html) ----------
 DT = 0.1                  # simulation step in seconds; the game uses its frame time (~0.016)
 MAX_TIME = 240.0          # safety cap on a single strike
-BUDGET = 2000             # $2M, in thousands of dollars
+BUDGET = 60000            # $60M, in thousands of dollars
 
 # Reference values (public, approximate) scaled to the map: 0.3 px/s per km/h, cost in $ thousands.
 #   shahed  Shahed-136 class loitering munition: ~$35k, ~185 km/h, ~50 kg warhead, 5-round launcher racks
 #   decoy   foam-body decoy (Gerbera class): ~$10k, ~160 km/h, no warhead, flown mixed in with Shaheds
 #   cruise  subsonic land-attack cruise missile: ~$1.5M, ~850 km/h, ~450 kg warhead, fired in fours
+#   tomahawk  Tomahawk Block IV/V: ~$2M, ~880 km/h, ~450 kg warhead, GPS + terrain matching, so it barely
+#           drifts under jamming; launched from the missile ship like the cruise missiles
 #   usv     explosive sea drone (Magura class): ~$250k, ~42 knots top speed, ~300 kg warhead, packs of 3
 # `unit` is how many the AI adds per step of its count choice (a launcher rack for the cheap drones).
 MUNITIONS = {
-    "shahed": dict(cost=35, usd=35e3, speed=55, damage=1, blast=12, gap=0.7, unit=4, slow=True, low=False, sea=False, drift=1.0),
-    "decoy": dict(cost=10, usd=10e3, speed=48, damage=0, blast=0, gap=0.5, unit=4, slow=True, low=False, sea=False, drift=1.0),
-    "cruise": dict(cost=1500, usd=1.5e6, speed=255, damage=3, blast=20, gap=1.2, unit=1, slow=False, low=True, sea=False, drift=0.15),
-    "usv": dict(cost=250, usd=250e3, speed=23, damage=3, blast=20, gap=1.0, unit=1, slow=False, low=False, sea=True, drift=0.0),
+    "shahed": dict(pk=0.85, cost=35, usd=35e3, speed=55, damage=1, blast=12, gap=0.7, unit=8, slow=True, low=False, sea=False, drift=1.0),
+    "decoy": dict(pk=0.85, cost=10, usd=10e3, speed=48, damage=0, blast=0, gap=0.5, unit=8, slow=True, low=False, sea=False, drift=1.0),
+    "cruise": dict(pk=0.5, cost=1500, usd=1.5e6, speed=255, damage=3, blast=20, gap=1.2, unit=2, slow=False, low=True, sea=False, drift=0.15),
+    "tomahawk": dict(pk=0.4, cost=2000, usd=2e6, speed=265, damage=3, blast=20, gap=1.2, unit=2, slow=False, low=True, sea=False, drift=0.05),
+    "usv": dict(pk=0.0, cost=250, usd=250e3, speed=23, damage=3, blast=20, gap=1.0, unit=1, slow=False, low=False, sea=True, drift=0.0),
 }
 TYPES = list(MUNITIONS)
 
-# target sizes (half length, half width) used for blast checks, and hit points
+# Map scale: 1 px = 100 m, so the map is about 170 km across and the launch sites sit ~140 km
+# from the city. Time runs about 100x faster than real life, which keeps real speed ratios.
+#
+# target sizes (half length, half width) used for blast checks, and hit points. Ranges in px:
+#   sam          range = missile reach (30 km); own / own_low = its launcher radar alone (15 km, 7 km vs
+#                low cruise missiles). Inside a radar station's coverage it can fire out to full range.
+#   frigate      naval SAM reach 50 km; its mast radar sees 38 km (20 km vs sea-skimmers), and the shore
+#                radars let it engage anything they track out to full reach. gun = 76 mm deck gun (11 km)
+#   boat         30 mm autocannon (5 km)
+#   shorad       short-range missile system guarding a site gap (12 km, carries its own radar)
+#   gun          SHORAD gun team (4.5 km)
+#   interceptor  quadcopter interceptor: spots on its own at 3 km, flies out up to 6 km from home, and is cued
+#                onto anything a radar station tracks inside that leash
+#   radar        coverage 60 km against drones; against low cruise missiles only to the radar horizon (28 km)
 KINDS = {
     "plant": dict(hp=3, hl=14, hw=10), "substation": dict(hp=2, hl=9, hw=9), "fuel": dict(hp=2, hl=11, hw=7),
-    "port": dict(hp=2, hl=16, hw=6), "cp": dict(hp=3, hl=13, hw=9), "radar": dict(hp=1, hl=6, hw=6),
-    "sam": dict(hp=2, hl=7, hw=7, range=250), "gun": dict(hp=1, hl=4, hw=4, range=90),
-    "interceptor": dict(hp=1, hl=6, hw=6, detect=150, leash=300),
-    "frigate": dict(hp=4, hl=22, hw=5.5, range=170, gun=110, speed=9),
-    "boat": dict(hp=1, hl=8, hw=2.6, gun=120, speed=28),
+    "port": dict(hp=2, hl=16, hw=6), "cp": dict(hp=3, hl=13, hw=9),
+    "radar": dict(hp=1, hl=6, hw=6, cover=600, cover_low=280),
+    "coastal_radar": dict(hp=1, hl=6, hw=6, cover=450, cover_low=320),   # watches the sea approach
+    "sam": dict(hp=2, hl=7, hw=7, range=300, own=150, own_low=70), "gun": dict(hp=1, hl=4, hw=4, range=45),
+    "shorad": dict(hp=1, hl=5, hw=5, range=120, own=120, own_low=60),   # short-range SAM: 12 km, own radar
+    "interceptor": dict(hp=1, hl=6, hw=6, detect=30, leash=60),
+    "frigate": dict(hp=4, hl=22, hw=5.5, range=500, own=380, own_low=200, gun=110, speed=9),
+    "boat": dict(hp=1, hl=8, hw=2.6, gun=50, speed=28),
 }
 OBJECTIVES = ["plant", "substation", "fuel", "port", "cp"]
 
-SAM_RELOAD, SAM_SPEED = 1.2, 300.0
-SAM_PK_SLOW, SAM_PK_LOW = 0.85, 0.7
-GUN_RELOAD, GUN_PK = 0.5, 0.06
+SAM_RELOAD, SAM_SPEED = 0.4, 1200.0   # ~40 s between launches; missiles at ~Mach 3.5
+# SAM kill chance per shot is per munition (pk above): slow drones are easy, a sea-skimming cruise missile
+# seen late is hard, and a terrain-hugging Tomahawk is harder still.
+# Fire discipline: long-range SAMs and the frigate save their missiles for cruise missiles and only fire on
+# slow drones that come within HOLD_FIRE of the launcher; guns, interceptor drones and SHORAD take the drones.
+HOLD_FIRE = 100
+GUN_RELOAD, GUN_PK = 0.5, 0.12
 SHIP_GUN_RELOAD = 1.2
 DRONE_SPEED = 95.0
-INT_SPEED, INT_PK, INT_RELOAD = DRONE_SPEED * 1.35, 0.65, 1.5
-SAM_USD, SHIP_SAM_USD, INTERCEPTOR_USD = 3e6, 1.2e6, 20e3
+INT_SPEED, INT_PK, INT_RELOAD = 85.0, 0.65, 1.5   # quadcopter interceptors, ~280 km/h
+SAM_USD, SHIP_SAM_USD, SHORAD_USD, INTERCEPTOR_USD, GUN_BURST_USD = 3e6, 1.8e6, 4e5, 5e3, 3e3
 
-PAD = (-880.0, -40.0)     # air launch site
-DOCK = (-860.0, 380.0)    # sea launch site
+TRUCKS = [(-880.0, -40.0), (-760.0, -400.0)]   # truck launch sites A and B (Shaheds, decoys)
+SHIP = (-800.0, 520.0)    # missile ship far offshore (cruise missiles)
+DOCK = (-480.0, 470.0)    # mothership (sea drones)
 JAM = (520.0, -110.0, 150.0)  # GPS jamming zone over the city core: x, y, radius
 COAST = (170.0, 1.1)
 
@@ -84,7 +109,7 @@ def plan_cost(plan):
 
 class Target:
     __slots__ = ("kind", "x", "y", "hp", "dead", "ammo", "cd", "cd2", "home", "wp", "to_wp", "dir",
-                 "vx", "vy", "ang", "prey")
+                 "vx", "vy", "ang", "prey", "mobile")
 
     def __init__(self, kind, x, y, rng):
         self.kind, self.x, self.y = kind, float(x), float(y)
@@ -94,10 +119,11 @@ class Target:
         self.vx = self.vy = 0.0
         self.ang = rng.random() * 6.3
         self.prey = None
+        self.mobile = False
 
 
 class Munition:
-    __slots__ = ("type", "m", "salvo", "x", "y", "heading", "route", "i", "ex", "ey", "engaged", "dead")
+    __slots__ = ("type", "m", "salvo", "x", "y", "heading", "route", "i", "ex", "ey", "engaged", "dead", "aim", "terminal")
 
     def __init__(self, mtype, salvo, x, y, route):
         self.type, self.m, self.salvo = mtype, MUNITIONS[mtype], salvo
@@ -106,6 +132,8 @@ class Munition:
         self.ex = self.ey = 0.0      # GPS error walked in by jamming
         self.engaged = 0             # SAM missiles in flight toward it
         self.dead = False
+        self.aim = salvo.get("aim")  # the target it's flying at, so it can divert if that falls first
+        self.terminal = False        # locked onto its aim point for the final dive
 
 
 def build_city(rng):
@@ -121,31 +149,54 @@ def build_city(rng):
       - the frigate holds the seaward approach to the port; the patrol boat pickets further
         out along the sea lane as an early tripwire
       - GPS jamming over the city core, so GPS-guided drones lose accuracy on the way in
+      - a networked air picture: the main radar and a coastal radar cue the SAM sites, the frigate
+        and the interceptors onto targets beyond what their own sensors can see
     """
     t = []
     add = lambda kind, x, y: t.append(Target(kind, x, y, rng)) or t[-1]
+
+    def mobile(kind, x, y):
+        """Mobile units shift up to ~4 km between strikes, so a plan can't count on where they are."""
+        a, r = rng.random() * 6.283, math.sqrt(rng.random()) * 40
+        u = add(kind, x + math.cos(a) * r, y + math.sin(a) * r)
+        u.home, u.mobile = (u.x, u.y), True
+        return u
+
     add("plant", 620, -120)
     add("substation", 360, 40)
     add("fuel", 720, 30)
     add("port", 500, coast_y(500) - 10)
     add("cp", 560, -330)
+    add("coastal_radar", 300, 160)
     add("radar", 520, -180)
-    add("sam", 430, -100).ammo = 8
-    add("sam", 630, -200).ammo = 8
-    # gun teams: on each SAM site, the command post, and between the plant and fuel depot
+    # medium-range SAM batteries: several launchers each, so a deeper magazine
+    add("sam", 430, -100).ammo = 12
+    add("sam", 630, -200).ammo = 12
+    # short-range missile systems plugging the gaps: the substation/coast side and the plant/fuel side
+    mobile("shorad", 410, 100).ammo = 6
+    mobile("shorad", 700, -60).ammo = 6
+    # gun teams: on each SAM site and the command post, plus mobile fire groups out on the approach axes
     for x, y in [(450, -80), (650, -180), (540, -305), (680, -40)]:
         add("gun", x, y)
-    add("interceptor", 230, -60)      # western axis screen
-    add("interceptor", 470, -420)     # northern axis screen
+    for x, y in [(300, -140), (260, 95), (410, -350), (440, 120)]:
+        mobile("gun", x, y)
+    # interceptor drone teams: forward screens on the west and north axes, plus two close-in teams
+    for x, y in [(230, -60), (470, -420), (340, -260), (600, -40)]:
+        mobile("interceptor", x, y)
     fr = add("frigate", 380, 320)
-    fr.ammo, fr.wp, fr.dir = 6, (580, 320), 0.0
+    fr.ammo, fr.wp, fr.dir = 8, (580, 320), 0.0
     b = add("boat", 60, 330)
     b.wp = (-160, 330)
     return t
 
 
-def simulate(plan, seed=0, budget=BUDGET):
-    """Run one strike. Salvos past the budget are trimmed, in order."""
+def simulate(plan, seed=0, budget=BUDGET, sites=None):
+    """Run one strike. Salvos past the budget are trimmed, in order.
+
+    sites optionally moves the launch sites: {"trucks": [(x, y), (x, y)], "ship": (x, y), "mother": (x, y)}.
+    """
+    trucks = (sites or {}).get("trucks", TRUCKS)
+    ship, dock = (sites or {}).get("ship", SHIP), (sites or {}).get("mother", DOCK)
     rng = random.Random(seed)
     # trim to budget
     salvos, left = [], budget
@@ -156,6 +207,38 @@ def simulate(plan, seed=0, budget=BUDGET):
             salvos.append(dict(s, count=n, fired=0, hits=0, lost=0))
             left -= n * c
     targets = build_city(rng)
+
+    def target_at(p, r=30.0):
+        best, bd = None, r
+        for t in targets:
+            if not t.dead:
+                d = math.hypot(t.x - p[0], t.y - p[1])
+                if d < bd:
+                    best, bd = t, d
+        return best
+
+    for s in salvos:
+        s["aim"] = target_at(s["route"][-1])
+
+    def retarget(m):
+        """Datalinked munitions divert from a destroyed target: to the salvo's backup if it still stands,
+        otherwise to the nearest objective they can reach."""
+        alt = target_at(m.salvo["alt"]) if m.salvo.get("alt") else None
+        nxt = alt
+        if nxt is None:
+            bd = float("inf")
+            for t in targets:
+                if t.dead or t.kind not in OBJECTIVES:
+                    continue
+                if m.m["sea"] and t.y < coast_y(t.x) - 40:
+                    continue
+                d = math.hypot(t.x - m.x, t.y - m.y)
+                if d < bd:
+                    nxt, bd = t, d
+        if nxt is None:
+            return
+        m.aim = nxt
+        m.route, m.i, m.ex, m.ey = [to_water(nxt.x, nxt.y) if m.m["sea"] else (nxt.x, nxt.y)], 0, 0.0, 0.0
     munitions, missiles = [], []
     stats = dict(intercepted=0, impacts=0, sam_shots=0, enemy_spend=0.0, lost_to={}, kill_times={})
     clock = 0.0
@@ -168,7 +251,8 @@ def simulate(plan, seed=0, budget=BUDGET):
 
     def fire(s):
         k = s["fired"]
-        start = DOCK if MUNITIONS[s["type"]]["sea"] else PAD
+        start = (ship if s["type"] in ("cruise", "tomahawk") else dock if MUNITIONS[s["type"]]["sea"]
+                 else trucks[s.get("site", 0)])
         off = (1 if k % 2 else -1) * math.ceil(k / 2) * 6
         pts = [(float(x), float(y)) for x, y in s["route"]]
         if MUNITIONS[s["type"]]["sea"]:
@@ -197,13 +281,17 @@ def simulate(plan, seed=0, budget=BUDGET):
         m.salvo["hits"] += 1
         if best.hp <= 0:
             best.dead = True
-            if best.kind in OBJECTIVES or best.kind == "radar":
+            if best.kind in OBJECTIVES or best.kind in ("radar", "coastal_radar"):
                 stats["kill_times"][best.kind] = round(clock, 1)
 
     def nearest(t, pool, r):
-        best, bd = None, r
+        """Closest live munition in pool within r of t (cheap box test first: this is the hot loop)."""
+        best, bd, tx, ty = None, r, t.x, t.y
         for m in pool:
-            d = math.hypot(m.x - t.x, m.y - t.y)
+            dx, dy = m.x - tx, m.y - ty
+            if m.dead or dx > bd or dx < -bd or dy > bd or dy < -bd:
+                continue
+            d = math.hypot(dx, dy)
             if d < bd:
                 best, bd = m, d
         return best
@@ -221,15 +309,22 @@ def simulate(plan, seed=0, budget=BUDGET):
             if m.dead:
                 continue
             M = m.m
-            if M["drift"] and math.hypot(m.x - jx, m.y - jy) < jr:
-                m.ex = max(-70, min(70, m.ex + (rng.random() - 0.5) * 160 * dt * M["drift"]))
-                m.ey = max(-70, min(70, m.ey + (rng.random() - 0.5) * 160 * dt * M["drift"]))
+            if M["damage"] and m.aim is not None and m.aim.dead and not m.terminal:
+                retarget(m)
+            if M["drift"] and not m.terminal and math.hypot(m.x - jx, m.y - jy) < jr:
+                m.ex = max(-35, min(35, m.ex + (rng.random() - 0.5) * 160 * dt * M["drift"]))
+                m.ey = max(-35, min(35, m.ey + (rng.random() - 0.5) * 160 * dt * M["drift"]))
             px, py = m.route[m.i]
             gx, gy = px + m.ex, py + m.ey
             dx, dy = gx - m.x, gy - m.y
             dist, step = math.hypot(dx, dy), M["speed"] * dt
             want = math.atan2(dy, dx)
-            m.heading += wrap(want - m.heading) * min(1.0, dt * (3 if M["slow"] else 6))
+            if m.i == len(m.route) - 1 and dist < 40:
+                m.terminal = True        # final dive: fly straight at the locked aim point
+            if m.terminal:
+                m.heading = want
+            else:
+                m.heading += wrap(want - m.heading) * min(1.0, dt * (3 if M["slow"] else 6))
             if dist <= step + 2:
                 m.x, m.y = gx, gy
                 if m.i == len(m.route) - 1:
@@ -257,14 +352,22 @@ def simulate(plan, seed=0, budget=BUDGET):
                 continue
             ms["done"] = True
             m.engaged -= 1
-            if not m.dead and rng.random() < (SAM_PK_LOW if m.m["low"] else SAM_PK_SLOW):
+            if not m.dead and rng.random() < m.m["pk"]:
                 down(m, "SAMs")
         missiles = [ms for ms in missiles if not ms.get("done")]
 
         # defenses
         live = [m for m in munitions if not m.dead]
         air = [m for m in live if not m.m["sea"]]
-        radar = any(t.kind == "radar" and not t.dead for t in targets)
+        ship_prey = [m for m in live if m.m["sea"] or m.m["slow"]]
+        radars = [t for t in targets if t.kind in ("radar", "coastal_radar") and not t.dead]
+
+        def tracked(m):
+            """Is a radar station holding a track on this munition? Low cruise missiles hide under the horizon."""
+            for rd in radars:
+                if math.hypot(m.x - rd.x, m.y - rd.y) <= KINDS[rd.kind]["cover_low" if m.m["low"] else "cover"]:
+                    return True
+            return False
         for t in targets:
             if t.dead:
                 continue
@@ -280,14 +383,14 @@ def simulate(plan, seed=0, budget=BUDGET):
                     t.y += math.sin(t.dir) * k["speed"] * dt
                 t.cd2 -= dt
                 if t.cd2 <= 0:
-                    m = nearest(t, [q for q in live if not q.dead and (q.m["sea"] or q.m["slow"])], k["gun"])
+                    m = nearest(t, ship_prey, k["gun"])
                     if m:
                         t.cd2 = SHIP_GUN_RELOAD
                         if rng.random() < (0.3 if m.m["sea"] else 0.2):
                             down(m, "ships")
                 if not t.ammo:
                     continue
-            if t.kind in ("sam", "frigate"):
+            if t.kind in ("sam", "shorad", "frigate"):
                 t.cd -= dt
                 if t.cd > 0 or not t.ammo:
                     continue
@@ -295,9 +398,13 @@ def simulate(plan, seed=0, budget=BUDGET):
                 for m in air:
                     if m.dead or m.engaged:
                         continue
-                    eff = r * ((0.7 if radar else 0.4) if m.m["low"] else (1.0 if radar else 0.6))
                     d = math.hypot(m.x - t.x, m.y - t.y)
-                    if d < eff and d < bd:
+                    if d >= r or d >= bd:
+                        continue
+                    if t.kind != "shorad" and m.m["slow"] and d > HOLD_FIRE:
+                        continue
+                    # its own radar sees it, or the network hands over a track
+                    if d < (k["own_low"] if m.m["low"] else k["own"]) or tracked(m):
                         best, bd = m, d
                 if best is None:
                     continue
@@ -305,15 +412,16 @@ def simulate(plan, seed=0, budget=BUDGET):
                 t.ammo -= 1
                 best.engaged += 1
                 stats["sam_shots"] += 1
-                stats["enemy_spend"] += SAM_USD if t.kind == "sam" else SHIP_SAM_USD
+                stats["enemy_spend"] += {"sam": SAM_USD, "shorad": SHORAD_USD}.get(t.kind, SHIP_SAM_USD)
                 missiles.append(dict(x=t.x, y=t.y, tx=best.x, ty=best.y, target=best))
             elif t.kind == "gun":
                 t.cd -= dt
                 if t.cd > 0:
                     continue
-                m = nearest(t, [q for q in air if not q.dead], k["range"])
+                m = nearest(t, air, k["range"])
                 if m:
                     t.cd = GUN_RELOAD
+                    stats["enemy_spend"] += GUN_BURST_USD
                     if rng.random() < (GUN_PK * 0.3 if m.m["low"] else GUN_PK):
                         down(m, "guns")
             elif t.kind == "interceptor":
@@ -324,6 +432,8 @@ def simulate(plan, seed=0, budget=BUDGET):
                     pool = [m for m in air if not m.dead and m.m["slow"]
                             and math.hypot(m.x - t.home[0], m.y - t.home[1]) < k["leash"]]
                     t.prey = nearest(t, pool, k["detect"])
+                    if t.prey is None:   # radar cue: chase a tracked drone anywhere inside the leash
+                        t.prey = nearest(t, [m for m in pool if tracked(m)], float("inf"))
                 if t.prey:
                     gx, gy, sp = t.prey.x, t.prey.y, INT_SPEED
                 else:

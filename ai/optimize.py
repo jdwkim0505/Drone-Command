@@ -9,7 +9,7 @@ import random
 import sys
 
 from doctrines import general as reward
-from plans import FIELDS, SLOTS, decode, describe, random_action
+from plans import ALL_FIELDS, N, SLOTS, decode, decode_sites, describe, random_action
 from sim import simulate
 
 POP, GENERATIONS, SEEDS, ELITE = 40, 30, 3, 8
@@ -17,20 +17,20 @@ POP, GENERATIONS, SEEDS, ELITE = 40, 30, 3, 8
 
 def fitness(action, seeds):
     # dice rolls vary, so average a few strikes per plan
-    return sum(reward(simulate(decode(action), s)) for s in seeds) / len(seeds)
+    return sum(reward(simulate(decode(action), s, sites=decode_sites(action))) for s in seeds) / len(seeds)
 
 
 def mutate(a, rng, rate=0.15):
     a = list(a)
     for i in range(len(a)):
         if rng.random() < rate:
-            a[i] = rng.randrange(FIELDS[i % 5])
+            a[i] = rng.randrange(ALL_FIELDS[i])
     return a
 
 
 def crossover(a, b, rng):
     # swap whole salvos so a good salvo stays intact
-    return [x for i in range(SLOTS) for x in (a if rng.random() < 0.5 else b)[i * 5:(i + 1) * 5]]
+    return [x for i in range(SLOTS) for x in (a if rng.random() < 0.5 else b)[i * N:(i + 1) * N]] + list((a if rng.random() < 0.5 else b)[SLOTS * N:])
 
 
 def main(seed=0):
@@ -46,7 +46,7 @@ def main(seed=0):
         elite = [a for _, a in scored[:ELITE]]
         pop = elite + [mutate(crossover(rng.choice(elite), rng.choice(elite), rng), rng) for _ in range(POP - ELITE)]
     # re-test the winner on fresh dice so the number is honest
-    final = [simulate(decode(best), 10_000 + s) for s in range(50)]
+    final = [simulate(decode(best), 10_000 + s, sites=decode_sites(best)) for s in range(50)]
     print("\nbest plan:\n" + describe(best))
     print(f"\nover 50 fresh strikes: reward {sum(reward(r) for r in final) / 50:.1f}, "
           f"objectives destroyed {sum(r['objectives_destroyed'] for r in final) / 50:.2f} of 5")
